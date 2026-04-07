@@ -15,6 +15,8 @@ interface LobbyTableSummary {
   type: LobbyRoomType;
   status: string;
   hostUserId: string;
+  blindSmall: number;
+  blindBig: number;
   currentPlayers: number;
   humanPlayers: number;
   maxPlayers: number;
@@ -176,12 +178,16 @@ const fallbackTournamentTables: LobbyTableItem[] = [
 function toLobbyTable(summary: LobbyTableSummary): LobbyTableItem {
   const mappedType: LobbyTableItem["type"] =
     summary.type === "ai_bot" ? "bot" : summary.type;
+  const stakes =
+    Number.isFinite(summary.blindSmall) && Number.isFinite(summary.blindBig)
+      ? `${summary.blindSmall}/${summary.blindBig}`
+      : "-";
 
   return {
     id: summary.id,
     type: mappedType,
     name: summary.name,
-    stakes: "-",
+    stakes,
     players: summary.currentPlayers,
     max: summary.maxPlayers,
     isPrivate: summary.isPrivate,

@@ -130,6 +130,8 @@ export interface TableSummary {
   type: RoomType;
   status: RoomStatus;
   hostUserId: string;
+  blindSmall: number;
+  blindBig: number;
   currentPlayers: number;
   humanPlayers: number;
   maxPlayers: number;

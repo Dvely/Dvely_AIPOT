@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, MessageCircle, Settings, Users, Info, Trophy, Clock, Coins, Target, X, Plus } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { getCurrentAuth, getCurrentUserId } from "../auth";
@@ -380,21 +380,23 @@ function bestScore(cards: string[]): HandScore {
   return best;
 }
 
-function estimateHeroWinRateFromFlop(params: {
+function estimateHeroWinRate(params: {
   heroCards: string[];
   boardCards: string[];
   opponents: number;
   iterations?: number;
 }): number | null {
   const { heroCards, boardCards, opponents, iterations = 260 } = params;
-  if (heroCards.length < 2 || boardCards.length < 3 || opponents < 1) {
+  if (heroCards.length < 2 || opponents < 1 || boardCards.length > 5) {
     return null;
   }
 
-  const flop = boardCards.slice(0, 3);
-  const known = new Set([...heroCards.slice(0, 2), ...flop]);
+  const hero = heroCards.slice(0, 2);
+  const knownBoard = boardCards.slice(0, 5);
+  const known = new Set([...hero, ...knownBoard]);
   const baseDeck = createRawDeck().filter((card) => !known.has(card));
-  const need = opponents * 2 + 2;
+  const boardNeed = Math.max(0, 5 - knownBoard.length);
+  const need = opponents * 2 + boardNeed;
   if (baseDeck.length < need) {
     return null;
   }
@@ -413,17 +415,17 @@ function estimateHeroWinRateFromFlop(params: {
       selected.push(baseDeck[idx]);
     }
 
-    const runout = selected.slice(0, 2);
-    const board5 = [...flop, ...runout];
-    const hero = bestScore([...heroCards.slice(0, 2), ...board5]);
+    const runout = selected.slice(0, boardNeed);
+    const board5 = [...knownBoard, ...runout];
+    const heroScore = bestScore([...hero, ...board5]);
 
     let heroRank = 1;
     let tieCount = 1;
     for (let opp = 0; opp < opponents; opp += 1) {
-      const start = 2 + opp * 2;
+      const start = boardNeed + opp * 2;
       const oppHand = [selected[start], selected[start + 1]];
       const score = bestScore([...oppHand, ...board5]);
-      const compared = compareScore(score, hero);
+      const compared = compareScore(score, heroScore);
       if (compared > 0) {
         heroRank = 0;
       } else if (compared === 0) {
@@ -529,6 +531,7 @@ export function PlayTable() {
   const [actionBusy, setActionBusy] = useState(false);
   const [botModelId, setBotModelId] = useState<string>("local-qwen");
   const [botStyle, setBotStyle] = useState<BotStyle>("balanced");
+  const lastAnimatedLiveHandIdRef = useRef<string | null>(null);
 
   // Raise Action State
   const [isRaising, setIsRaising] = useState(false);
@@ -572,7 +575,7 @@ export function PlayTable() {
     heroSeatId !== null &&
     liveGame?.gameState?.currentTurnSeatId === heroSeatId,
   );
-  const isHeroActionTurn = userState === "playing" && (activeTurn === "hero" || isHeroLiveTurn);
+  const isHeroActionTurn = userState === "playing" && (isLiveMode ? isHeroLiveTurn : activeTurn === "hero");
 
   const syncLiveTable = async () => {
     if (!isLiveMode) return;
@@ -586,6 +589,14 @@ export function PlayTable() {
       }
 
       const room = await apiFetch<LiveRoom>(`/rooms/${roomId}`);
+      const nextHandId = game?.gameState?.handId ?? null;
+      const shouldAnimateDeal = Boolean(
+        nextHandId && nextHandId !== lastAnimatedLiveHandIdRef.current,
+      );
+      if (shouldAnimateDeal && nextHandId) {
+        lastAnimatedLiveHandIdRef.current = nextHandId;
+      }
+
       setLiveRoom((prev) => {
         const prevSeats = prev?.seats ?? [];
         const nextSeats = room.seats;
@@ -676,7 +687,7 @@ export function PlayTable() {
             chips: participant.stackAmount,
             bet: participant.currentBetAmount,
             status: participant.folded ? "folded" : "active",
-            cardsDealt: participant.holeCards.length > 0,
+            cardsDealt: participant.holeCards.length > 0 && !shouldAnimateDeal,
             holeCards: participant.holeCards,
             seatId: seat.seatId,
           };
@@ -691,18 +702,25 @@ export function PlayTable() {
 
       if (game?.gameState) {
         const nextPhase = toUiPhase(room.status, game.gameState.street);
+        const displayPhase = shouldAnimateDeal && nextPhase === "preflop" ? "dealing" : nextPhase;
         const nextCommunityCards = game.gameState.boardCards.map(toUiCard);
         const nextTurn =
           game.gameState.currentTurnSeatId
             ? seatMap.get(game.gameState.currentTurnSeatId) ?? null
             : null;
 
-        setPhase((prev) => (prev === nextPhase ? prev : nextPhase));
+        setPhase((prev) => (prev === displayPhase ? prev : displayPhase));
         setCommunityCards((prev) =>
           sameStringArray(prev, nextCommunityCards) ? prev : nextCommunityCards,
         );
         setPot((prev) => (prev === game.gameState.potAmount ? prev : game.gameState.potAmount));
         setActiveTurn((prev) => (prev === nextTurn ? prev : nextTurn));
+
+        if (shouldAnimateDeal && nextPhase === "preflop") {
+          setTimeout(() => {
+            void syncLiveTable();
+          }, 450);
+        }
       } else {
         setPhase((prev) => (prev === "init" ? prev : "init"));
         setCommunityCards((prev) => (prev.length === 0 ? prev : []));
@@ -753,7 +771,7 @@ export function PlayTable() {
 
     const state = liveGame?.gameState;
     const hero = players.find((player) => player.id === "hero");
-    if (!state || !hero || hero.holeCards.length < 2 || state.boardCards.length < 3) {
+    if (!state || !hero || hero.holeCards.length < 2) {
       setHeroEquity(null);
       return;
     }
@@ -761,17 +779,17 @@ export function PlayTable() {
     const activeOpponents = players.filter(
       (player) => player.id !== "hero" && player.status !== "folded",
     ).length;
-    const estimated = estimateHeroWinRateFromFlop({
+    const estimated = estimateHeroWinRate({
       heroCards: hero.holeCards,
       boardCards: state.boardCards,
       opponents: Math.max(activeOpponents, 1),
-      iterations: 260,
+      iterations: state.boardCards.length === 0 ? 160 : 240,
     });
     setHeroEquity(estimated);
   }, [
     isLiveMode,
     liveGame?.gameState?.handId,
-    liveGame?.gameState?.boardCards?.slice(0, 3).join(","),
+    liveGame?.gameState?.boardCards?.join(","),
     players.find((player) => player.id === "hero")?.holeCards.join(","),
     players.filter((player) => player.id !== "hero" && player.status !== "folded").length,
   ]);
@@ -1126,48 +1144,74 @@ export function PlayTable() {
     }
   };
 
+  const handleLeaveTable = async () => {
+    if (!isLiveMode) {
+      navigate("/lobby");
+      return;
+    }
+
+    setLiveBusy(true);
+    try {
+      await apiFetch(`/rooms/${roomId}/leave-room`, { method: "POST" });
+      navigate("/lobby");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "테이블 퇴장 처리에 실패했습니다.");
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
   const handleHeroAction = (action: "fold" | "call" | "raise", amount?: number) => {
     if (!isLiveMode && activeTurn !== "hero") return;
 
     if (isLiveMode) {
-      const state = liveGame?.gameState;
-      if (!state || heroSeatId === null || state.currentTurnSeatId !== heroSeatId) return;
+      if (actionBusy || liveBusy) return;
 
       const sendLiveAction = async () => {
-        const payload: { action: LiveActionType; amount?: number } = {
-          action: "check",
-        };
-
-        if (action === "fold") {
-          payload.action = "fold";
-        } else if (action === "call") {
-          payload.action = state.minCallAmount > 0 ? "call" : "check";
-        } else {
-          const inputAmount = Number.isFinite(amount ?? NaN)
-            ? Number(amount)
-            : Number(raiseAmount);
-          if (!Number.isFinite(inputAmount) || inputAmount <= 0) {
-            alert("유효한 레이즈 금액을 입력해 주세요.");
-            return;
-          }
-
-          const hero = players.find((player) => player.id === "hero");
-          const effectiveStack = hero ? hero.chips + hero.bet : 0;
-
-          if (effectiveStack > 0 && inputAmount >= effectiveStack) {
-            payload.action = "all-in";
-          } else if (state.maxBetAmount > 0) {
-            payload.action = "raise";
-            payload.amount = Math.floor(inputAmount);
-          } else {
-            payload.action = "bet";
-            payload.amount = Math.floor(inputAmount);
-          }
-        }
-
         setLiveBusy(true);
         setActionBusy(true);
         try {
+          const latest = await apiFetch<LiveGameSnapshot>(`/game/rooms/${roomId}/state`);
+          const state = latest.gameState;
+          if (!state || heroSeatId === null) {
+            setLog("게임 상태를 동기화 중입니다...");
+            await syncLiveTable();
+            return;
+          }
+          if (state.currentTurnSeatId !== heroSeatId) {
+            setLog("이미 턴이 넘어갔습니다. 상태를 동기화합니다.");
+            await syncLiveTable();
+            return;
+          }
+
+          const payload: { action: LiveActionType; amount?: number } = {
+            action: "check",
+          };
+
+          if (action === "fold") {
+            payload.action = "fold";
+          } else if (action === "call") {
+            payload.action = "call";
+          } else {
+            const inputAmount = Number.isFinite(amount ?? NaN)
+              ? Number(amount)
+              : Number(raiseAmount);
+            if (!Number.isFinite(inputAmount) || inputAmount <= 0) {
+              alert("유효한 레이즈 금액을 입력해 주세요.");
+              return;
+            }
+
+            const hero = players.find((player) => player.id === "hero");
+            const effectiveStack = hero ? hero.chips + hero.bet : 0;
+
+            if (effectiveStack > 0 && inputAmount >= effectiveStack) {
+              payload.action = "all-in";
+            } else {
+              payload.action = state.maxBetAmount > 0 ? "raise" : "bet";
+              payload.amount = Math.floor(inputAmount);
+            }
+          }
+
           await apiFetch(`/game/rooms/${roomId}/act`, {
             method: "POST",
             body: JSON.stringify(payload),
@@ -1376,8 +1420,11 @@ export function PlayTable() {
       {/* Top Bar */}
       <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-50 pointer-events-none">
         <button 
-          onClick={() => navigate("/lobby")}
-          className="flex items-center gap-2 text-white bg-black/40 hover:bg-black/60 px-4 py-2 rounded-full font-bold backdrop-blur-md transition border border-white/10 pointer-events-auto"
+          onClick={() => {
+            void handleLeaveTable();
+          }}
+          disabled={liveBusy}
+          className="flex items-center gap-2 text-white bg-black/40 hover:bg-black/60 disabled:opacity-50 px-4 py-2 rounded-full font-bold backdrop-blur-md transition border border-white/10 pointer-events-auto"
         >
           <ArrowLeft className="w-5 h-5" />
           Leave

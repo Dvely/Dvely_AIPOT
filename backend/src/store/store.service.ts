@@ -370,6 +370,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			type: room.type,
 			status: room.status,
 			hostUserId: room.hostUserId,
+			blindSmall: room.blindSmall,
+			blindBig: room.blindBig,
 			currentPlayers,
 			humanPlayers,
 			maxPlayers: room.maxSeats,
@@ -619,7 +621,10 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
 	leaveSeat(roomId: string, seatId: number, actorUserId: string): RoomRecord {
 		const room = this.ensureRoom(roomId);
-		this.assertRoomEditable(room);
+		const leaveDuringHand = room.status === RoomStatus.IN_HAND;
+		if (!leaveDuringHand) {
+			this.assertRoomEditable(room);
+		}
 
 		const seat = this.ensureSeat(room, seatId);
 		if (!seat.participant) {
@@ -637,10 +642,84 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			this.assertHostControlAllowed(room, actorUserId);
 		}
 
+		if (leaveDuringHand) {
+			this.foldSeatBeforeLeave(room, seatId);
+		}
+
 		seat.participant = null;
-		this.setReadyState(room);
+		if (!leaveDuringHand) {
+			this.setReadyState(room);
+		}
 		this.markDirty();
 		return room;
+	}
+
+	private foldSeatBeforeLeave(room: RoomRecord, seatId: number) {
+		const state = room.gameState;
+		const seat = this.ensureSeat(room, seatId);
+		const participant = seat.participant;
+		if (!state || !participant) return;
+
+		if (
+			state.currentTurnSeatId === participant.seatId &&
+			!participant.folded &&
+			!participant.allIn
+		) {
+			this.applyPlayerAction({
+				roomId: room.id,
+				actorSeatId: participant.seatId,
+				action: ActionType.FOLD,
+			});
+			return;
+		}
+
+		if (!participant.folded) {
+			participant.folded = true;
+			if (!state.actedSeatIds.includes(participant.seatId)) {
+				state.actedSeatIds.push(participant.seatId);
+			}
+
+			state.actions.push({
+				handId: state.handId,
+				order: state.actions.length + 1,
+				seatId: participant.seatId,
+				playerId: participant.playerId,
+				action: ActionType.FOLD,
+				amount: 0,
+				potAfter: state.potAmount,
+				street: state.street,
+				createdAt: new Date().toISOString(),
+			});
+		}
+
+		const remaining = this.activePlayers(room);
+		if (remaining.length === 1) {
+			this.completeHand(room, [remaining[0]]);
+			return;
+		}
+
+		if (remaining.length === 0) {
+			room.status = RoomStatus.HAND_ENDED;
+			state.street = HandStreet.RESULT;
+			state.currentTurnSeatId = null;
+			state.actionTimerDeadline = null;
+			this.markDirty();
+			return;
+		}
+
+		if (state.currentTurnSeatId === participant.seatId) {
+			const nextSeatId = this.nextTurnSeatId(room, participant.seatId);
+			state.currentTurnSeatId = nextSeatId;
+			state.actionTimerDeadline = nextSeatId
+				? new Date(Date.now() + this.turnTimeoutSec * 1000).toISOString()
+				: null;
+		}
+
+		if (this.isStreetDone(room)) {
+			this.moveStreet(room);
+		}
+
+		this.markDirty();
 	}
 
 	addBot(params: {
