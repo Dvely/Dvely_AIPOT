@@ -1,14 +1,74 @@
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { motion } from "motion/react";
-import { Users, Mail } from "lucide-react";
+import { LogIn, UserPlus, Users } from "lucide-react";
+import { ensureAuthSeedData, signInGuest, signInUser, signUpUser } from "../auth";
 
 export function AuthScreen() {
   const navigate = useNavigate();
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [nickname, setNickname] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
 
-  const handleLogin = (role: "guest" | "free" | "pro") => {
-     localStorage.setItem("aipot_role", role);
-     localStorage.setItem("aipot_auth", role === "guest" ? "guest" : "user");
-     navigate("/loading"); // 로그인 후 딜레이(로딩) 스크린으로 이동
+  useEffect(() => {
+    ensureAuthSeedData();
+  }, []);
+
+  const resetMessage = () => {
+    if (errorMessage) setErrorMessage("");
+  };
+
+  const handleGuestLogin = () => {
+    signInGuest();
+    navigate("/loading");
+  };
+
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    resetMessage();
+
+    const trimmedNickname = nickname.trim();
+    if (!trimmedNickname || !password) {
+      setErrorMessage("아이디와 비밀번호를 입력해 주세요.");
+      return;
+    }
+
+    if (mode === "signin") {
+      const result = signInUser(trimmedNickname, password);
+      if (!result.ok) {
+        setErrorMessage(result.message || "로그인에 실패했습니다.");
+        return;
+      }
+
+      navigate("/loading");
+      return;
+    }
+
+    if (password.length < 4) {
+      setErrorMessage("비밀번호는 4자 이상으로 설정해 주세요.");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setErrorMessage("비밀번호 확인이 일치하지 않습니다.");
+      return;
+    }
+
+    const signUpResult = signUpUser(trimmedNickname, password);
+    if (!signUpResult.ok) {
+      setErrorMessage(signUpResult.message || "회원가입에 실패했습니다.");
+      return;
+    }
+
+    const signInResult = signInUser(trimmedNickname, password);
+    if (!signInResult.ok) {
+      setErrorMessage(signInResult.message || "회원가입 후 로그인에 실패했습니다.");
+      return;
+    }
+
+    navigate("/loading");
   };
 
   return (
@@ -27,32 +87,76 @@ export function AuthScreen() {
              AI Poker Trainer<br/>Play, Analyze, and Improve.
            </p>
 
-           <div className="w-full flex flex-col gap-4">
+           <div className="w-full grid grid-cols-2 gap-2 mb-4 rounded-xl bg-[#11122D] p-1 border border-white/10">
+             <button
+               onClick={() => {
+                 setMode("signin");
+                 resetMessage();
+               }}
+               className={`rounded-lg py-2 text-sm font-black uppercase tracking-wider transition ${mode === "signin" ? "bg-cyan-600 text-white" : "text-slate-400 hover:text-white"}`}
+             >
+               Sign In
+             </button>
+             <button
+               onClick={() => {
+                 setMode("signup");
+                 resetMessage();
+               }}
+               className={`rounded-lg py-2 text-sm font-black uppercase tracking-wider transition ${mode === "signup" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`}
+             >
+               Sign Up
+             </button>
+           </div>
+
+           <form onSubmit={handleSubmit} className="w-full flex flex-col gap-4">
              <input 
                type="text" 
-               placeholder="ID (Nickname)" 
+               placeholder="ID (Nickname)"
+               value={nickname}
+               onChange={(event) => {
+                 setNickname(event.target.value);
+                 resetMessage();
+               }}
                className="w-full bg-[#11122D] border border-white/10 rounded-xl p-4 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-500"
              />
              <input 
                type="password" 
-               placeholder="Password" 
+               placeholder="Password"
+               value={password}
+               onChange={(event) => {
+                 setPassword(event.target.value);
+                 resetMessage();
+               }}
                className="w-full bg-[#11122D] border border-white/10 rounded-xl p-4 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-500"
              />
-             <div className="flex gap-4 mt-2">
-               <button
-                 onClick={() => handleLogin("free")}
-                 className="flex-1 bg-cyan-600 text-white font-black py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-cyan-500 transition shadow-[0_4px_0_#0891B2] hover:translate-y-1 hover:shadow-none active:translate-y-1 text-sm md:text-base"
-               >
-                 Sign In (FREE)
-               </button>
-               <button
-                 onClick={() => handleLogin("pro")}
-                 className="flex-1 bg-purple-600 text-white font-black py-4 rounded-xl flex items-center justify-center gap-2 hover:bg-purple-500 transition shadow-[0_4px_0_#7E22CE] hover:translate-y-1 hover:shadow-none active:translate-y-1 text-sm md:text-base"
-               >
-                 Sign In (PRO)
-               </button>
-             </div>
-           </div>
+
+             {mode === "signup" && (
+               <input 
+                 type="password" 
+                 placeholder="Confirm Password"
+                 value={confirmPassword}
+                 onChange={(event) => {
+                   setConfirmPassword(event.target.value);
+                   resetMessage();
+                 }}
+                 className="w-full bg-[#11122D] border border-white/10 rounded-xl p-4 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-500"
+               />
+             )}
+
+             {errorMessage && (
+               <p className="rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-300">
+                 {errorMessage}
+               </p>
+             )}
+
+             <button
+               type="submit"
+               className={`w-full text-white font-black py-4 rounded-xl flex items-center justify-center gap-2 transition shadow-[0_4px_0_#1E40AF] hover:translate-y-1 hover:shadow-none active:translate-y-1 text-sm md:text-base ${mode === "signin" ? "bg-cyan-600 hover:bg-cyan-500" : "bg-indigo-600 hover:bg-indigo-500"}`}
+             >
+               {mode === "signin" ? <LogIn className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
+               {mode === "signin" ? "Sign In" : "Create Account"}
+             </button>
+           </form>
 
            <div className="w-full flex items-center gap-4 my-8 opacity-50">
              <div className="h-[1px] bg-white flex-1"></div>
@@ -61,7 +165,7 @@ export function AuthScreen() {
            </div>
 
            <button
-             onClick={() => handleLogin("guest")}
+             onClick={handleGuestLogin}
              className="w-full bg-transparent text-slate-300 border-2 border-slate-600 font-black py-4 rounded-xl hover:bg-slate-800 hover:text-white hover:border-slate-500 transition flex items-center justify-center gap-3 group"
            >
              <Users className="w-6 h-6 text-slate-400 group-hover:text-white transition" />

@@ -2,6 +2,7 @@ import { useLocation, useNavigate } from "react-router";
 import { useEffect, useState } from "react";
 import { ArrowLeft, MessageCircle, Settings, Users, Info, Trophy, Clock, Coins, Target, X, Plus } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { getCurrentAuth } from "../auth";
 
 type Position = number; // Used as seat index
 type Role = "BTN" | "SB" | "BB" | "UTG" | "MP" | "HJ" | "CO" | "UTG+1";
@@ -107,6 +108,7 @@ function TimerRing({ isActive, duration = 15 }: { isActive: boolean; duration?: 
 export function PlayTable() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { isPro } = getCurrentAuth();
   
   const isTournament = location.state?.mode === "tournament";
   const isSpectatingStart = location.state?.spectate === true;
@@ -1038,7 +1040,7 @@ export function PlayTable() {
                      <option value="aggressive">Aggressive (Free Model)</option>
                      <option value="tight">Tight (Free Model)</option>
                      <option value="random">Random (Free Model)</option>
-                     {localStorage.getItem("aipot_role") === "pro" ? (
+                     {isPro ? (
                        <option value="gto-wizard">GTO Wizard API (PRO Model)</option>
                      ) : (
                        <option value="gto-wizard" disabled>🔒 GTO Wizard API (PRO Only)</option>

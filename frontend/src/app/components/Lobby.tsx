@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   Coins, Menu, Crown, Settings, Plus, Target, Users, Swords, BookOpen, X, Lock, Unlock, LogOut, CheckCircle2, ShoppingBag, Info, Trophy, Timer, Volume2, Globe, ChevronRight
 } from "lucide-react";
+import { getCurrentAuth, signOut } from "../auth";
 
 export function Lobby() {
   const navigate = useNavigate();
@@ -25,9 +26,7 @@ export function Lobby() {
     eyes: "default"
   });
   
-  const authRole = localStorage.getItem("aipot_role") || "guest";
-  const isLoggedIn = authRole !== "guest";
-  const isPro = authRole === "pro";
+  const { isLoggedIn, isPro, userName } = getCurrentAuth();
 
   const gameModes = [
     {
@@ -77,7 +76,7 @@ export function Lobby() {
     { rank: 2, name: "AllInAl", chips: "$38,150,000", isMe: false },
     { rank: 3, name: "SeoulShark", chips: "$31,900,000", isMe: false },
     { rank: 4, name: "RiverRat", chips: "$28,400,000", isMe: false },
-    { rank: 42, name: isLoggedIn ? "PokerPro22" : "Guest_1092", chips: "$10,420", isMe: true },
+    { rank: 42, name: isLoggedIn ? userName : "Guest_1092", chips: "$10,420", isMe: true },
   ];
 
   const mockQuests = [
@@ -88,7 +87,7 @@ export function Lobby() {
 
   const handleTableClick = (table: any) => {
     if (table.type === "tournament" && !isLoggedIn) {
-      alert("Guest cannot enter tournaments. Please sign in as FREE or PRO.");
+      alert("Guest cannot enter tournaments. Please sign in with your account.");
       return;
     }
     if (table.isPrivate) {
@@ -145,7 +144,7 @@ export function Lobby() {
             <div className={`${isLoggedIn ? 'bg-cyan-500' : 'bg-slate-500'} p-1.5 rounded-full mr-2`}>
               <Users className="w-4 h-4 text-white" />
             </div>
-            <span className="font-mono font-bold text-sm">{isLoggedIn ? "PokerPro22" : "Guest"}</span>
+            <span className="font-mono font-bold text-sm">{isLoggedIn ? userName : "Guest"}</span>
           </div>
 
           <div 
@@ -694,9 +693,9 @@ export function Lobby() {
               </div>
               <div className="p-4 md:p-6 flex flex-col items-center">
                  <div className="w-24 h-24 rounded-full bg-slate-800 border-4 border-cyan-500 overflow-hidden mb-4 shadow-[0_0_15px_rgba(6,182,212,0.5)]">
-                   <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${isLoggedIn ? "You" : "Guest"}&top=${avatarOptions.top}&skinColor=${avatarOptions.skinColor}&hairColor=${avatarOptions.hairColor}&clothing=${avatarOptions.clothing}&mouth=${avatarOptions.mouth}&eyes=${avatarOptions.eyes}`} alt="avatar" />
+                   <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${isLoggedIn ? userName : "Guest"}&top=${avatarOptions.top}&skinColor=${avatarOptions.skinColor}&hairColor=${avatarOptions.hairColor}&clothing=${avatarOptions.clothing}&mouth=${avatarOptions.mouth}&eyes=${avatarOptions.eyes}`} alt="avatar" />
                  </div>
-                 <h2 className="text-2xl font-black">{isLoggedIn ? "PokerPro22" : "Guest_1092"}</h2>
+                 <h2 className="text-2xl font-black">{isLoggedIn ? userName : "Guest_1092"}</h2>
                  <p className="text-cyan-400 font-bold text-sm mb-6 uppercase tracking-widest">{isPro ? "PRO Member" : isLoggedIn ? "FREE User" : "Guest"}</p>
                  
                  {isLoggedIn && (
@@ -923,8 +922,7 @@ export function Lobby() {
                <div className="p-4 border-t border-white/5">
                  <button 
                    onClick={() => {
-                     localStorage.removeItem("aipot_auth");
-                     localStorage.removeItem("aipot_role");
+                     signOut();
                      navigate("/");
                    }}
                    className="flex items-center gap-3 w-full p-3 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 font-bold transition text-left"
