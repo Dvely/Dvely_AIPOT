@@ -43,10 +43,18 @@ npm run start:dev
 
 - JWT_SECRET
 - JWT_EXPIRES_IN
+- DB_HOST / DB_PORT / DB_USERNAME / DB_PASSWORD / DB_NAME
+- DB_SYNCHRONIZE
 - OPENAI_API_KEY / OPENAI_MODEL
 - ANTHROPIC_API_KEY / ANTHROPIC_MODEL
 - GEMINI_API_KEY / GEMINI_MODEL
 - LOCAL_LLM_BASE_URL / LOCAL_LLM_MODEL
+
+## MySQL 설정
+
+- 기본 DB 드라이버는 MySQL입니다(TypeORM).
+- 애플리케이션 상태(users/rooms/hand-reviews)는 `state_snapshots` 테이블에 스냅샷으로 저장/복원됩니다.
+- 로컬 개발 시 `DB_SYNCHRONIZE=true`로 두고, 운영에서는 `false` 권장입니다.
 
 ## Local LLM 연동
 

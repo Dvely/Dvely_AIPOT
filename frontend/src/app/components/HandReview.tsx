@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { 
   ArrowLeft, History, PlayCircle, ChevronRight, CheckCircle2, XCircle, BrainCircuit, Target, ShieldAlert, PauseCircle, ChevronLeft, FastForward
 } from "lucide-react";
+import { apiFetch } from "../api";
 
 // --- MOCK DATA ---
 interface ActionStep {
@@ -30,115 +31,131 @@ interface HandHistory {
   steps: ActionStep[];
 }
 
-const mockHands: HandHistory[] = [
-  {
-    id: "h1",
-    date: "2 mins ago",
-    title: "AA vs KK All-in Preflop",
-    stakes: "$500/$1000",
-    net: 21250,
-    steps: [
-      {
-        id: 1, player: "Villain", street: "Preflop", desc: "Raises to $2,500", pot: 4000, board: [], heroCards: ["A♠", "A♥"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Villain opens from early position. Their range is likely tight (top 15% of hands).", evScore: 0, heroEquity: 82, heatMapType: "tight"
-      },
-      {
-        id: 2, player: "Hero", street: "Preflop", desc: "3-Bets to $7,500", pot: 11500, board: [], heroCards: ["A♠", "A♥"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Excellent 3-bet. With AA, you must build the pot immediately and deny equity to speculative hands.", evScore: +1.5, heroEquity: 82, heatMapType: "premium"
-      },
-      {
-        id: 3, player: "Villain", street: "Preflop", desc: "4-Bets All-in $21,250", pot: 28750, board: [], heroCards: ["A♠", "A♥"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Villain jams. Their range narrows to QQ+, AKs. You are crushing this range.", evScore: 0, heroEquity: 82, heatMapType: "premium"
-      },
-      {
-        id: 4, player: "Hero", street: "Preflop", desc: "Calls $13,750", pot: 42500, board: [], heroCards: ["A♠", "A♥"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Snap call. Folding here would be a catastrophic mistake.", evScore: +4.2, heroEquity: 82, heatMapType: "premium"
-      },
-      {
-        id: 5, player: "System", street: "Showdown", desc: "Hero wins $42,500", pot: 42500, board: ["7♦", "2♠", "Q♥", "5♣", "9♠"], heroCards: ["A♠", "A♥"], opponents: [{ name: "Villain", cards: ["K♣", "K♦"] }],
-        analysis: "Board runs out clean. AA holds against KK. Perfect execution.", evScore: 0, heroEquity: 100, heatMapType: "showdown"
-      }
-    ]
-  },
-  {
-    id: "h2",
-    date: "15 mins ago",
-    title: "Tough Fold on the Turn",
-    stakes: "$100/$200",
-    net: -600,
-    steps: [
-      {
-        id: 1, player: "Hero", street: "Preflop", desc: "Raises to $600", pot: 900, board: [], heroCards: ["7♠", "8♠"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Standard open with a suited connector from late position to steal blinds or play a multi-way pot.", evScore: +0.2, heroEquity: 42, heatMapType: "broadway"
-      },
-      {
-        id: 2, player: "Villain", street: "Preflop", desc: "Calls $600", pot: 1500, board: [], heroCards: ["7♠", "8♠"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Villain defends BB. Their range is wide but capped (likely no AA, KK, AK).", evScore: 0, heroEquity: 45, heatMapType: "broadway"
-      },
-      {
-        id: 3, player: "Hero", street: "Flop", desc: "C-Bets $800", pot: 2300, board: ["9♠", "10♠", "2♣"], heroCards: ["7♠", "8♠"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Great c-bet. You flopped a massive open-ended straight flush draw. You want to build the pot.", evScore: +1.8, heroEquity: 56, heatMapType: "draws"
-      },
-      {
-        id: 4, player: "Villain", street: "Flop", desc: "Calls $800", pot: 3100, board: ["9♠", "10♠", "2♣"], heroCards: ["7♠", "8♠"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Villain calls. They likely have a piece (Tx, 9x) or a worse draw.", evScore: 0, heroEquity: 54, heatMapType: "broadway"
-      },
-      {
-        id: 5, player: "Hero", street: "Turn", desc: "Checks", pot: 3100, board: ["9♠", "10♠", "2♣", "A♥"], heroCards: ["7♠", "8♠"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Checking the Ace is prudent. It hits Villain's calling range hard (A9, AT, AQ).", evScore: +0.5, heroEquity: 28, heatMapType: "tight"
-      },
-      {
-        id: 6, player: "Villain", street: "Turn", desc: "Bets $3,400", pot: 6500, board: ["9♠", "10♠", "2♣", "A♥"], heroCards: ["7♠", "8♠"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Villain overbets the pot. This strongly polarizes their range to two-pair+ or pure bluffs.", evScore: 0, heroEquity: 28, heatMapType: "bluff"
-      },
-      {
-        id: 7, player: "Hero", street: "Turn", desc: "Folds", pot: 6500, board: ["9♠", "10♠", "2♣", "A♥"], heroCards: ["7♠", "8♠"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Excellent discipline. You don't have the direct pot odds to call for your draw against this sizing.", evScore: +1.5, heroEquity: 0, heatMapType: "draws"
-      }
-    ]
-  },
-  {
-    id: "h3",
-    date: "Just now",
-    title: "3-Way All-in on the Flop",
-    stakes: "$200/$400",
-    net: 48000,
-    steps: [
-      {
-        id: 1, player: "UTG", street: "Preflop", desc: "Raises to $1,200", pot: 1800, board: [], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: [] }, { name: "BTN", cards: [] }],
-        analysis: "UTG opens strong. BTN and you (BB) call. Multi-way dynamics require careful play of drawing hands.", evScore: 0, heroEquity: 22, heatMapType: "tight"
-      },
-      {
-        id: 2, player: "BTN", street: "Preflop", desc: "Calls $1,200", pot: 3000, board: [], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: [] }, { name: "BTN", cards: [] }],
-        analysis: "BTN flat calls, capping their range. They likely have mid-pairs or broadways.", evScore: 0, heroEquity: 25, heatMapType: "broadway"
-      },
-      {
-        id: 3, player: "Hero", street: "Preflop", desc: "Calls $800", pot: 3800, board: [], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: [] }, { name: "BTN", cards: [] }],
-        analysis: "Closing the action with suited connectors. Excellent pot odds to see a flop 3-way.", evScore: +0.5, heroEquity: 25, heatMapType: "draws"
-      },
-      {
-        id: 4, player: "Hero", street: "Flop", desc: "Checks", pot: 3800, board: ["7♠", "6♠", "2♦"], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: [] }, { name: "BTN", cards: [] }],
-        analysis: "Monster flop! Open-ended straight flush draw. Checking to the preflop aggressor.", evScore: +1.2, heroEquity: 54, heatMapType: "draws"
-      },
-      {
-        id: 5, player: "UTG", street: "Flop", desc: "Bets $2,500", pot: 6300, board: ["7♠", "6♠", "2♦"], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: [] }, { name: "BTN", cards: [] }],
-        analysis: "UTG continues. They likely have an overpair (AA, KK) given the dry board.", evScore: 0, heroEquity: 54, heatMapType: "premium"
-      },
-      {
-        id: 6, player: "BTN", street: "Flop", desc: "Raises to $8,000", pot: 14300, board: ["7♠", "6♠", "2♦"], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: [] }, { name: "BTN", cards: [] }],
-        analysis: "BTN raises! This shows immense strength, likely a set (77, 66) or two pair.", evScore: 0, heroEquity: 42, heatMapType: "tight"
-      },
-      {
-        id: 7, player: "Hero", street: "Flop", desc: "All-in $22,100", pot: 36400, board: ["7♠", "6♠", "2♦"], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: [] }, { name: "BTN", cards: [] }],
-        analysis: "Hero jams! With 15 outs twice, you are actually the mathematical favorite or flipping against sets.", evScore: +2.8, heroEquity: 42, heatMapType: "draws"
-      },
-      {
-        id: 8, player: "System", street: "Showdown", desc: "Hero hits Flush and wins $80,600", pot: 80600, board: ["7♠", "6♠", "2♦", "K♣", "3♠"], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: ["A♦", "A♥"] }, { name: "BTN", cards: ["7♣", "7♥"] }],
-        analysis: "River brings the spade! Your draw comes in against Aces and top set. Great push on the flop.", evScore: 0, heroEquity: 100, heatMapType: "showdown"
-      }
-    ]
-  }
-];
+interface HandReviewAction {
+  handId: string;
+  order: number;
+  seatId: number;
+  playerId: string;
+  action: string;
+  amount: number;
+  potAfter: number;
+  street: string;
+  createdAt: string;
+}
+
+interface HandReviewRecord {
+  handId: string;
+  roomId: string;
+  participantIds: string[];
+  boardCards: string[];
+  actions: HandReviewAction[];
+  winnerPlayerId: string;
+  resultPot: number;
+  createdAt: string;
+}
+
+const SUIT_MAP: Record<string, string> = {
+  S: "\u2660",
+  H: "\u2665",
+  D: "\u2666",
+  C: "\u2663",
+};
+
+function toUiCard(card: string) {
+  if (card.length < 2) return card;
+  const rank = card.slice(0, -1);
+  const suit = card.slice(-1).toUpperCase();
+  return `${rank}${SUIT_MAP[suit] ?? suit}`;
+}
+
+function toReviewStreet(street: string): ActionStep["street"] {
+  if (street === "FLOP") return "Flop";
+  if (street === "TURN") return "Turn";
+  if (street === "RIVER") return "River";
+  if (street === "SHOWDOWN" || street === "RESULT") return "Showdown";
+  return "Preflop";
+}
+
+function toBoardByStreet(board: string[], street: string) {
+  const cards = board.map(toUiCard);
+  if (street === "FLOP") return cards.slice(0, 3);
+  if (street === "TURN") return cards.slice(0, 4);
+  if (street === "RIVER" || street === "SHOWDOWN" || street === "RESULT") return cards;
+  return [];
+}
+
+function toRelativeDate(value: string) {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return value;
+  const diffMinutes = Math.max(1, Math.floor((Date.now() - timestamp) / 60000));
+  if (diffMinutes < 60) return `${diffMinutes} mins ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours} hours ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays} days ago`;
+}
+
+function toHeatMapType(action: string): ActionStep["heatMapType"] {
+  if (action === "all-in") return "premium";
+  if (action === "raise" || action === "bet") return "broadway";
+  if (action === "call") return "draws";
+  if (action === "fold") return "bluff";
+  return "tight";
+}
+
+function toHandHistory(record: HandReviewRecord): HandHistory {
+  const opponentNames = record.participantIds.map((id, idx) => ({
+    name: `P${idx + 1}`,
+    cards: [] as string[],
+  }));
+
+  const steps: ActionStep[] = record.actions
+    .sort((a, b) => a.order - b.order)
+    .map((action) => {
+      const street = toReviewStreet(action.street);
+      const actionName = action.action.toUpperCase();
+      const amountText = action.amount > 0 ? ` $${action.amount.toLocaleString()}` : "";
+
+      return {
+        id: action.order,
+        player: `Seat ${action.seatId}`,
+        street,
+        desc: `${actionName}${amountText}`,
+        pot: action.potAfter,
+        board: toBoardByStreet(record.boardCards, action.street),
+        heroCards: [],
+        opponents: opponentNames,
+        analysis: `Live action replay from room ${record.roomId.slice(0, 8)}.`,
+        evScore: 0,
+        heroEquity: 50,
+        heatMapType: toHeatMapType(action.action),
+      };
+    });
+
+  steps.push({
+    id: steps.length + 1,
+    player: "System",
+    street: "Showdown",
+    desc: `Winner ${record.winnerPlayerId.slice(0, 8)} wins $${record.resultPot.toLocaleString()}`,
+    pot: record.resultPot,
+    board: record.boardCards.map(toUiCard),
+    heroCards: [],
+    opponents: opponentNames,
+    analysis: "Showdown completed from real game data.",
+    evScore: 0,
+    heroEquity: 100,
+    heatMapType: "showdown",
+  });
+
+  return {
+    id: record.handId,
+    date: toRelativeDate(record.createdAt),
+    title: `Hand #${record.handId.slice(0, 8)}`,
+    stakes: "LIVE",
+    net: record.resultPot,
+    steps,
+  };
+}
 
 // --- 13x13 Range Grid Helper ---
 const RANKS = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
@@ -190,10 +207,34 @@ function getHeatMapColor(rIdx: number, cIdx: number, type: ActionStep['heatMapTy
 
 export function HandReview() {
   const navigate = useNavigate();
+  const [hands, setHands] = useState<HandHistory[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const [selectedHand, setSelectedHand] = useState<HandHistory | null>(null);
   const [stepIdx, setStepIdx] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const loadHands = async () => {
+      setLoading(true);
+      try {
+        const list = await apiFetch<HandReviewRecord[]>("/hand-review/hands");
+        const mapped = list
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+          .map(toHandHistory);
+        setHands(mapped);
+        setErrorMessage("");
+      } catch (error) {
+        setHands([]);
+        setErrorMessage(error instanceof Error ? error.message : "Failed to load hand history.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void loadHands();
+  }, []);
 
   // Auto-play logic
   useEffect(() => {
@@ -241,8 +282,19 @@ export function HandReview() {
         <div className="flex-1 overflow-y-auto p-4 md:p-8 z-10">
           <div className="max-w-3xl mx-auto flex flex-col gap-4">
             <p className="text-slate-400 font-bold mb-2">Select a hand to review play-by-play.</p>
+            {loading && <p className="text-slate-300 font-semibold">Loading hands...</p>}
+            {!loading && errorMessage && (
+              <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-300 font-semibold">
+                {errorMessage}
+              </div>
+            )}
+            {!loading && !errorMessage && hands.length === 0 && (
+              <div className="rounded-xl border border-white/10 bg-[#242754] p-5 text-slate-300 font-semibold">
+                No hands yet. Play a game first and come back for review.
+              </div>
+            )}
             
-            {mockHands.map((hand, idx) => {
+            {hands.map((hand, idx) => {
               const finalStep = hand.steps[hand.steps.length - 1];
               return (
                 <motion.div
@@ -259,6 +311,9 @@ export function HandReview() {
                     <h3 className="text-xl font-black text-white">{hand.title}</h3>
                     <div className="flex items-center gap-2 mt-1">
                       <div className="flex gap-1">
+                        {finalStep.heroCards.length === 0 && (
+                          <span className="text-xs font-bold text-slate-500">Cards Hidden</span>
+                        )}
                         {finalStep.heroCards.map((c, i) => (
                           <div key={i} className={`w-6 h-8 bg-white rounded flex items-center justify-center text-xs font-black border border-slate-300 ${c.includes('♥') || c.includes('♦') ? 'text-red-600' : 'text-slate-900'}`}>{c}</div>
                         ))}
@@ -389,6 +444,12 @@ export function HandReview() {
            {/* Hero Area */}
            <div className="absolute bottom-8 md:bottom-12 text-center">
               <div className="flex gap-2 mb-3 justify-center">
+                 {currentStep.heroCards.length === 0 && (
+                   <>
+                     <div className="w-12 h-16 md:w-16 md:h-24 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-indigo-800 to-indigo-950 rounded-lg shadow-2xl border-2 border-white/20" />
+                     <div className="w-12 h-16 md:w-16 md:h-24 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-indigo-800 to-indigo-950 rounded-lg shadow-2xl border-2 border-white/20" />
+                   </>
+                 )}
                  {currentStep.heroCards.map((c, i) => (
                     <motion.div key={`h-${i}`} className={`w-12 h-16 md:w-16 md:h-24 bg-white rounded-lg shadow-2xl flex items-center justify-center text-lg md:text-2xl font-black border-2 border-slate-300 ${c.includes('♥') || c.includes('♦') ? 'text-red-600' : 'text-slate-900'}`}>
                       {c}

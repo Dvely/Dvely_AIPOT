@@ -209,3 +209,8 @@ export function getCurrentAuth(): AuthSnapshot {
     userName: user.nickname,
   };
 }
+
+export function getCurrentUserId() {
+  const user = readStoredUser();
+  return user?.id ?? null;
+}

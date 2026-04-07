@@ -36,60 +36,47 @@ interface LobbyTableItem {
   code?: string;
 }
 
-const fallbackTables: LobbyTableItem[] = [
+interface ProfileAvatar {
+  hairStyle: string;
+  skinTone: string;
+  hairColor: string;
+  faceType: string;
+  eyeType: string;
+  mouthType: string;
+  outfit: string;
+  accessory?: string;
+}
+
+interface ProfileMeResponse {
+  id: string;
+  nickname: string;
+  role: "guest" | "free" | "pro";
+  avatar: ProfileAvatar;
+  subscriptionActive: boolean;
+  createdAt: string;
+}
+
+interface ProfileStatsResponse {
+  playedHands: number;
+  winHands: number;
+  biggestPot: number;
+  totalProfit: number;
+  winRate: number;
+}
+
+const fallbackTournamentTables: LobbyTableItem[] = [
   {
-    id: "t1",
+    id: "tournament-mock-1",
     type: "tournament",
-    name: "Seoul Qualifier (Lvl 4)",
-    stakes: "100/200",
-    players: 128,
-    max: 500,
+    name: "Tournament Preview Table",
+    stakes: "-",
+    players: 72,
+    max: 180,
     isPrivate: false,
-    status: "Late Reg",
-    prizePool: "$50,000",
-    itm: "Top 36",
-    buyIn: "$100",
-  },
-  {
-    id: "t2",
-    type: "tournament",
-    name: "Sunday Million",
-    stakes: "500/1K",
-    players: 450,
-    max: 1000,
-    isPrivate: false,
-    status: "Running",
-    prizePool: "$1,000,000",
-    itm: "Top 100",
-    buyIn: "$500",
-  },
-  {
-    id: "ai-practice",
-    type: "bot",
-    name: "AI Bot Practice Room",
-    stakes: "0/0",
-    players: 1,
-    max: 8,
-    isPrivate: false,
-    highlight: true,
-  },
-  {
-    id: "c1",
-    type: "cash",
-    name: "Seoul High Roller",
-    stakes: "500/1K",
-    players: 4,
-    max: 8,
-    isPrivate: false,
-  },
-  {
-    id: "c2",
-    type: "cash",
-    name: "Beginner Friendly",
-    stakes: "50/100",
-    players: 2,
-    max: 8,
-    isPrivate: false,
+    status: "Preview",
+    prizePool: "TBD",
+    itm: "TBD",
+    buyIn: "TBD",
   },
 ];
 
@@ -101,15 +88,15 @@ function toLobbyTable(summary: LobbyTableSummary): LobbyTableItem {
     id: summary.id,
     type: mappedType,
     name: summary.name,
-    stakes: "50/100",
+    stakes: "-",
     players: summary.currentPlayers,
     max: summary.maxPlayers,
     isPrivate: summary.isPrivate,
     status: summary.status,
     code: summary.code,
-    buyIn: summary.type === "tournament" ? "$100" : undefined,
-    prizePool: summary.type === "tournament" ? "$50,000" : undefined,
-    itm: summary.type === "tournament" ? "Top 36" : undefined,
+    buyIn: summary.type === "tournament" ? "TBD" : undefined,
+    prizePool: summary.type === "tournament" ? "TBD" : undefined,
+    itm: summary.type === "tournament" ? "TBD" : undefined,
   };
 }
 
@@ -128,13 +115,24 @@ export function Lobby() {
     top: "shortHairShortFlat",
     skinColor: "ffdbb4",
     hairColor: "black",
+    face: "default",
     clothing: "hoodie",
     mouth: "smile",
     eyes: "default"
   });
-  const [tables, setTables] = useState<LobbyTableItem[]>(fallbackTables);
+  const [tables, setTables] = useState<LobbyTableItem[]>([]);
   const [tableLoading, setTableLoading] = useState(false);
   const [joinCode, setJoinCode] = useState("");
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const [profileMe, setProfileMe] = useState<ProfileMeResponse | null>(null);
+  const [profileStats, setProfileStats] = useState<ProfileStatsResponse | null>(null);
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [profileBusy, setProfileBusy] = useState(false);
   
   const { isLoggedIn, isPro, userName } = getCurrentAuth();
 
@@ -148,17 +146,116 @@ export function Lobby() {
     });
   };
 
+  const applyAvatarOptions = (avatar: ProfileAvatar) => {
+    setAvatarOptions({
+      top: avatar.hairStyle,
+      skinColor: avatar.skinTone,
+      hairColor: avatar.hairColor,
+      face: avatar.faceType,
+      clothing: avatar.outfit,
+      mouth: avatar.mouthType,
+      eyes: avatar.eyeType,
+    });
+  };
+
+  const loadProfile = async () => {
+    if (!isLoggedIn) return;
+
+    setProfileLoading(true);
+    try {
+      const [me, stats] = await Promise.all([
+        apiFetch<ProfileMeResponse>("/profile/me"),
+        apiFetch<ProfileStatsResponse>("/profile/stats"),
+      ]);
+
+      setProfileMe(me);
+      setProfileStats(stats);
+      applyAvatarOptions(me.avatar);
+      setProfileError("");
+    } catch (error) {
+      setProfileError(
+        error instanceof Error
+          ? error.message
+          : "프로필 정보를 불러오지 못했습니다.",
+      );
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  const saveAvatar = async () => {
+    if (!isLoggedIn) return;
+
+    setProfileBusy(true);
+    try {
+      await apiFetch("/profile/avatar", {
+        method: "PATCH",
+        body: JSON.stringify({
+          hairStyle: avatarOptions.top,
+          skinTone: avatarOptions.skinColor,
+          hairColor: avatarOptions.hairColor,
+          faceType: avatarOptions.face,
+          eyeType: avatarOptions.eyes,
+          mouthType: avatarOptions.mouth,
+          outfit: avatarOptions.clothing,
+        }),
+      });
+
+      await loadProfile();
+      setProfileTab("stats");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "아바타 저장에 실패했습니다.");
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const updatePassword = async () => {
+    if (!isLoggedIn) return;
+
+    if (!passwordForm.currentPassword || !passwordForm.newPassword) {
+      alert("현재 비밀번호와 새 비밀번호를 입력해 주세요.");
+      return;
+    }
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      alert("새 비밀번호 확인이 일치하지 않습니다.");
+      return;
+    }
+
+    setProfileBusy(true);
+    try {
+      await apiFetch("/profile/password", {
+        method: "POST",
+        body: JSON.stringify({
+          currentPassword: passwordForm.currentPassword,
+          newPassword: passwordForm.newPassword,
+        }),
+      });
+
+      setPasswordForm({
+        currentPassword: "",
+        newPassword: "",
+        confirmPassword: "",
+      });
+      setProfileTab("stats");
+      alert("비밀번호가 변경되었습니다.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "비밀번호 변경에 실패했습니다.");
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
   const loadTables = async () => {
     setTableLoading(true);
     try {
       const list = await apiFetch<LobbyTableSummary[]>("/lobby/tables");
-      if (Array.isArray(list) && list.length > 0) {
-        setTables(list.map(toLobbyTable));
-      } else {
-        setTables(fallbackTables);
-      }
+      const mapped = Array.isArray(list) ? list.map(toLobbyTable) : [];
+      const hasTournament = mapped.some((table) => table.type === "tournament");
+      setTables(hasTournament ? mapped : [...mapped, ...fallbackTournamentTables]);
     } catch {
-      setTables(fallbackTables);
+      setTables(fallbackTournamentTables);
     } finally {
       setTableLoading(false);
     }
@@ -167,6 +264,12 @@ export function Lobby() {
   useEffect(() => {
     void loadTables();
   }, []);
+
+  useEffect(() => {
+    if (showProfileModal && isLoggedIn) {
+      void loadProfile();
+    }
+  }, [showProfileModal, isLoggedIn]);
 
   const gameModes = [
     {
@@ -199,20 +302,6 @@ export function Lobby() {
       description: "Analyze your past games",
       locked: !isLoggedIn,
     },
-  ];
-
-  const mockLeaderboard = [
-    { rank: 1, name: "PokerKing99", chips: "$45,200,000", isMe: false },
-    { rank: 2, name: "AllInAl", chips: "$38,150,000", isMe: false },
-    { rank: 3, name: "SeoulShark", chips: "$31,900,000", isMe: false },
-    { rank: 4, name: "RiverRat", chips: "$28,400,000", isMe: false },
-    { rank: 42, name: isLoggedIn ? userName : "Guest_1092", chips: "$10,420", isMe: true },
-  ];
-
-  const mockQuests = [
-    { id: 1, title: "Play 50 Hands", progress: 32, max: 50, reward: "$1,000" },
-    { id: 2, title: "Win 3 pots at Showdown", progress: 1, max: 3, reward: "$500" },
-    { id: 3, title: "Review 1 Hand", progress: 0, max: 1, reward: "Pro Ticket" },
   ];
 
   const handleTableClick = async (table: LobbyTableItem) => {
@@ -249,7 +338,10 @@ export function Lobby() {
 
   const handleGameModeClick = async (id: string) => {
     if (id === "review") {
-      if (!isPro) return alert("Hand Review requires a PRO subscription.");
+      if (!isLoggedIn) {
+        alert("Guest cannot use Hand Review.");
+        return;
+      }
       navigate("/review");
       return;
     }
@@ -573,7 +665,7 @@ export function Lobby() {
                            {table.isPrivate ? <Lock className="w-4 h-4 text-red-400" /> : <Unlock className="w-4 h-4 text-green-400" />}
                            <span className="font-bold text-lg">{table.name}</span>
                          </div>
-                         <span className="text-sm font-semibold text-slate-400">Blinds: ${table.stakes}</span>
+                         <span className="text-sm font-semibold text-slate-400">Blinds: {table.stakes}</span>
                       </div>
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-1.5 bg-black/40 px-3 py-1 rounded-full border border-white/5">
@@ -600,31 +692,11 @@ export function Lobby() {
                     <h2 className="text-xl font-black text-white">Top Players</h2>
                     <span className="text-xs font-bold text-slate-400 bg-[#11122D] px-3 py-1 rounded-full">Season 12</span>
                  </div>
-                 
-                 {mockLeaderboard.map((user, idx) => (
-                    <motion.div 
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: idx * 0.1 }}
-                      key={user.rank}
-                      className={`flex items-center justify-between p-4 rounded-xl border ${user.isMe ? 'bg-indigo-600/20 border-indigo-400/50 shadow-inner' : 'bg-[#11122D] border-white/5'}`}
-                    >
-                      <div className="flex items-center gap-4">
-                         <div className={`w-8 text-center font-black text-lg ${user.rank <= 3 ? 'text-yellow-400' : 'text-slate-500'}`}>
-                           #{user.rank}
-                         </div>
-                         <div className="w-10 h-10 rounded-full bg-slate-700 overflow-hidden border-2 border-slate-600">
-                           <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user.name}`} alt="avatar" />
-                         </div>
-                         <div className="font-bold text-white text-lg flex items-center gap-2">
-                           {user.name} {user.isMe && <span className="bg-cyan-500 text-[10px] px-2 py-0.5 rounded-sm uppercase tracking-widest text-black">You</span>}
-                         </div>
-                      </div>
-                      <div className="font-black text-green-400 tracking-wider">
-                         {user.chips}
-                      </div>
-                    </motion.div>
-                 ))}
+
+                 <div className="bg-[#11122D] border border-white/10 rounded-2xl p-6 text-slate-300">
+                   <p className="font-bold text-white mb-2">Leaderboard는 실시간 API 연동 후 노출됩니다.</p>
+                   <p className="text-sm">현재 더미 데이터는 제거되었습니다.</p>
+                 </div>
               </div>
             )}
 
@@ -635,43 +707,13 @@ export function Lobby() {
                     <h2 className="text-xl font-black text-white flex items-center gap-2">
                       <Target className="text-cyan-400" /> Daily Missions
                     </h2>
-                    <span className="text-sm font-bold text-slate-400">Resets in 14:22:05</span>
+                    <span className="text-sm font-bold text-slate-400">API 연동 대기</span>
                  </div>
 
-                 {mockQuests.map((quest, idx) => (
-                    <motion.div 
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: idx * 0.1 }}
-                      key={quest.id}
-                      className="bg-[#11122D] p-5 rounded-2xl border border-white/5 relative overflow-hidden"
-                    >
-                       <div className="flex justify-between items-end mb-3">
-                         <div className="flex flex-col gap-1">
-                           <h3 className="font-bold text-lg text-white">{quest.title}</h3>
-                           <span className="text-yellow-400 font-black text-sm">Reward: {quest.reward}</span>
-                         </div>
-                         <div className="font-mono text-sm font-bold text-slate-400">
-                           {quest.progress} / {quest.max}
-                         </div>
-                       </div>
-                       <div className="w-full h-3 bg-slate-800 rounded-full overflow-hidden border border-slate-700 relative">
-                         <motion.div 
-                           initial={{ width: 0 }}
-                           animate={{ width: `${(quest.progress / quest.max) * 100}%` }}
-                           transition={{ duration: 1, delay: 0.5 }}
-                           className={`absolute inset-y-0 left-0 ${quest.progress >= quest.max ? 'bg-green-500' : 'bg-gradient-to-r from-cyan-600 to-cyan-400'}`}
-                         />
-                       </div>
-                       {quest.progress >= quest.max && (
-                         <div className="absolute inset-0 bg-green-500/20 backdrop-blur-[2px] flex items-center justify-center z-10">
-                           <button className="bg-green-500 text-white font-black px-6 py-2 rounded-full uppercase tracking-wider shadow-lg flex items-center gap-2 hover:bg-green-400 transition">
-                             <CheckCircle2 className="w-5 h-5" /> Claim Reward
-                           </button>
-                         </div>
-                       )}
-                    </motion.div>
-                 ))}
+                 <div className="bg-[#11122D] border border-white/10 rounded-2xl p-6 text-slate-300">
+                   <p className="font-bold text-white mb-2">퀘스트는 서버 데이터 연동 이후 활성화됩니다.</p>
+                   <p className="text-sm">현재 더미 데이터는 제거되었습니다.</p>
+                 </div>
               </div>
             )}
           </div>
@@ -927,10 +969,22 @@ export function Lobby() {
               </div>
               <div className="p-4 md:p-6 flex flex-col items-center">
                  <div className="w-24 h-24 rounded-full bg-slate-800 border-4 border-cyan-500 overflow-hidden mb-4 shadow-[0_0_15px_rgba(6,182,212,0.5)]">
-                   <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${isLoggedIn ? userName : "Guest"}&top=${avatarOptions.top}&skinColor=${avatarOptions.skinColor}&hairColor=${avatarOptions.hairColor}&clothing=${avatarOptions.clothing}&mouth=${avatarOptions.mouth}&eyes=${avatarOptions.eyes}`} alt="avatar" />
+                   <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${isLoggedIn ? (profileMe?.nickname ?? userName) : "Guest"}&top=${avatarOptions.top}&skinColor=${avatarOptions.skinColor}&hairColor=${avatarOptions.hairColor}&clothing=${avatarOptions.clothing}&mouth=${avatarOptions.mouth}&eyes=${avatarOptions.eyes}`} alt="avatar" />
                  </div>
-                 <h2 className="text-2xl font-black">{isLoggedIn ? userName : "Guest_1092"}</h2>
-                 <p className="text-cyan-400 font-bold text-sm mb-6 uppercase tracking-widest">{isPro ? "PRO Member" : isLoggedIn ? "FREE User" : "Guest"}</p>
+                 <h2 className="text-2xl font-black">{isLoggedIn ? (profileMe?.nickname ?? userName) : "Guest_1092"}</h2>
+                 <p className="text-cyan-400 font-bold text-sm mb-6 uppercase tracking-widest">{isLoggedIn ? ((profileMe?.role ?? (isPro ? "pro" : "free")) === "pro" ? "PRO Member" : "FREE User") : "Guest"}</p>
+
+                 {profileError && isLoggedIn && (
+                   <div className="w-full mb-4 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-300">
+                     {profileError}
+                   </div>
+                 )}
+
+                 {profileLoading && isLoggedIn && (
+                   <div className="w-full mb-4 rounded-lg border border-white/10 bg-[#11122D] px-3 py-3 text-sm font-semibold text-slate-300">
+                     Loading profile...
+                   </div>
+                 )}
                  
                  {isLoggedIn && (
                    <div className="flex gap-2 w-full mb-6">
@@ -944,19 +998,19 @@ export function Lobby() {
                    <div className="w-full bg-[#11122D] rounded-xl p-4 border border-white/5 grid grid-cols-2 gap-4 text-center mb-2">
                       <div>
                         <div className="text-slate-400 text-xs font-bold uppercase mb-1">Win Rate</div>
-                        <div className="text-green-400 font-black text-xl">42.5%</div>
+                        <div className="text-green-400 font-black text-xl">{profileStats ? `${profileStats.winRate.toFixed(1)}%` : "-"}</div>
                       </div>
                       <div>
                         <div className="text-slate-400 text-xs font-bold uppercase mb-1">Hands Played</div>
-                        <div className="text-white font-black text-xl">1,204</div>
+                        <div className="text-white font-black text-xl">{profileStats ? profileStats.playedHands.toLocaleString() : "-"}</div>
                       </div>
                       <div>
                         <div className="text-slate-400 text-xs font-bold uppercase mb-1">Biggest Pot</div>
-                        <div className="text-yellow-400 font-black text-xl">$52K</div>
+                        <div className="text-yellow-400 font-black text-xl">{profileStats ? `$${profileStats.biggestPot.toLocaleString()}` : "-"}</div>
                       </div>
                       <div>
-                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">Quests</div>
-                        <div className="text-white font-black text-xl">15</div>
+                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">Wins</div>
+                        <div className="text-white font-black text-xl">{profileStats ? profileStats.winHands.toLocaleString() : "-"}</div>
                       </div>
                    </div>
                  )}
@@ -1024,7 +1078,7 @@ export function Lobby() {
                          </select>
                        </div>
                      </div>
-                     <button onClick={() => setProfileTab("stats")} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-lg transition shadow-md w-full mt-2">
+                     <button onClick={() => { void saveAvatar(); }} disabled={profileBusy} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-lg transition shadow-md w-full mt-2 disabled:opacity-50">
                        Save Avatar
                      </button>
                    </div>
@@ -1034,9 +1088,28 @@ export function Lobby() {
                    <div className="w-full flex flex-col gap-4">
                      <div className="flex flex-col gap-2">
                        <label className="text-xs font-bold text-slate-400 uppercase">Change Password</label>
-                       <input type="password" placeholder="New Password" className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-600" />
-                       <input type="password" placeholder="Confirm Password" className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-600" />
-                       <button onClick={() => setProfileTab("stats")} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-lg transition shadow-md w-full mt-2">
+                       <input
+                         type="password"
+                         placeholder="Current Password"
+                         value={passwordForm.currentPassword}
+                         onChange={(event) => setPasswordForm((prev) => ({ ...prev, currentPassword: event.target.value }))}
+                         className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-600"
+                       />
+                       <input
+                         type="password"
+                         placeholder="New Password"
+                         value={passwordForm.newPassword}
+                         onChange={(event) => setPasswordForm((prev) => ({ ...prev, newPassword: event.target.value }))}
+                         className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-600"
+                       />
+                       <input
+                         type="password"
+                         placeholder="Confirm New Password"
+                         value={passwordForm.confirmPassword}
+                         onChange={(event) => setPasswordForm((prev) => ({ ...prev, confirmPassword: event.target.value }))}
+                         className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-600"
+                       />
+                       <button onClick={() => { void updatePassword(); }} disabled={profileBusy} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-lg transition shadow-md w-full mt-2 disabled:opacity-50">
                          Update Password
                        </button>
                      </div>

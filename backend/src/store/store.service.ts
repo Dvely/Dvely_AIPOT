@@ -2,9 +2,12 @@ import {
 	BadRequestException,
 	ConflictException,
 	Injectable,
+	OnModuleInit,
 	NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import {
 	ActionType,
 	BotModelTier,
@@ -25,6 +28,7 @@ import {
 	TableSummary,
 	UserRecord,
 } from '../common/domain.types';
+import { StateSnapshotEntity } from './entities/state-snapshot.entity';
 
 const DEFAULT_AVATAR: AvatarConfig = {
 	hairStyle: 'shortHairShortFlat',
@@ -37,14 +41,82 @@ const DEFAULT_AVATAR: AvatarConfig = {
 };
 
 @Injectable()
-export class StoreService {
+export class StoreService implements OnModuleInit {
 	private readonly users = new Map<string, UserRecord>();
 	private readonly userNicknameIndex = new Map<string, string>();
 	private readonly rooms = new Map<string, RoomRecord>();
 	private readonly handReviews = new Map<string, HandReviewRecord>();
 	private readonly turnTimeoutSec = 15;
+	private readonly snapshotId = 'global-state-v1';
 
 	private roomSeeded = false;
+
+	constructor(
+		@InjectRepository(StateSnapshotEntity)
+		private readonly snapshotRepository: Repository<StateSnapshotEntity>,
+	) {}
+
+	async onModuleInit(): Promise<void> {
+		await this.hydrateFromSnapshot();
+	}
+
+	private snapshotPayload() {
+		return {
+			users: Array.from(this.users.values()),
+			rooms: Array.from(this.rooms.values()),
+			handReviews: Array.from(this.handReviews.values()),
+			roomSeeded: this.roomSeeded,
+		};
+	}
+
+	private async hydrateFromSnapshot() {
+		const snapshot = await this.snapshotRepository.findOne({
+			where: { id: this.snapshotId },
+		});
+		if (!snapshot?.payload) return;
+
+		try {
+			const parsed = JSON.parse(snapshot.payload) as {
+				users?: UserRecord[];
+				rooms?: RoomRecord[];
+				handReviews?: HandReviewRecord[];
+				roomSeeded?: boolean;
+			};
+
+			this.users.clear();
+			this.userNicknameIndex.clear();
+			this.rooms.clear();
+			this.handReviews.clear();
+
+			for (const user of parsed.users ?? []) {
+				this.users.set(user.id, user);
+				this.userNicknameIndex.set(this.normalizeNickname(user.nickname), user.id);
+			}
+			for (const room of parsed.rooms ?? []) {
+				this.rooms.set(room.id, room);
+			}
+			for (const review of parsed.handReviews ?? []) {
+				this.handReviews.set(review.handId, review);
+			}
+			this.roomSeeded = parsed.roomSeeded ?? false;
+		} catch {
+			// Ignore malformed snapshot and continue with clean in-memory state.
+		}
+	}
+
+	private async persistSnapshot() {
+		const entity = this.snapshotRepository.create({
+			id: this.snapshotId,
+			payload: JSON.stringify(this.snapshotPayload()),
+		});
+		await this.snapshotRepository.save(entity);
+	}
+
+	private markDirty() {
+		void this.persistSnapshot().catch(() => {
+			// Persist failure should not break gameplay flow.
+		});
+	}
 
 	private normalizeNickname(nickname: string): string {
 		return nickname.trim().toLowerCase();
@@ -89,6 +161,7 @@ export class StoreService {
 
 		this.users.set(user.id, user);
 		this.userNicknameIndex.set(normalized, user.id);
+		this.markDirty();
 
 		return user;
 	}
@@ -99,6 +172,7 @@ export class StoreService {
 			throw new NotFoundException('사용자를 찾을 수 없습니다.');
 		}
 		user.passwordHash = passwordHash;
+		this.markDirty();
 		return user;
 	}
 
@@ -108,6 +182,7 @@ export class StoreService {
 			throw new NotFoundException('사용자를 찾을 수 없습니다.');
 		}
 		user.avatar = { ...avatar };
+		this.markDirty();
 		return user;
 	}
 
@@ -247,6 +322,7 @@ export class StoreService {
 
 		this.rooms.set(room.id, room);
 		this.setReadyState(room);
+		this.markDirty();
 
 		return room;
 	}
@@ -311,6 +387,7 @@ export class StoreService {
 		};
 
 		this.setReadyState(room);
+		this.markDirty();
 		return room;
 	}
 
@@ -352,6 +429,7 @@ export class StoreService {
 		};
 
 		this.setReadyState(room);
+		this.markDirty();
 		return room;
 	}
 
@@ -375,6 +453,7 @@ export class StoreService {
 
 		seat.participant = null;
 		this.setReadyState(room);
+		this.markDirty();
 		return room;
 	}
 
@@ -409,6 +488,7 @@ export class StoreService {
 		};
 
 		this.setReadyState(room);
+		this.markDirty();
 		return room;
 	}
 
@@ -429,6 +509,7 @@ export class StoreService {
 
 		seat.participant.botConfig = params.config;
 		seat.participant.displayName = `Bot-${params.config.style}`;
+		this.markDirty();
 		return room;
 	}
 
@@ -444,6 +525,7 @@ export class StoreService {
 
 		seat.participant = null;
 		this.setReadyState(room);
+		this.markDirty();
 		return room;
 	}
 
@@ -459,6 +541,7 @@ export class StoreService {
 
 		room.isPrivate = false;
 		room.hasBeenPublic = true;
+		this.markDirty();
 		return room;
 	}
 
@@ -469,6 +552,7 @@ export class StoreService {
 		}
 		room.status = RoomStatus.CLOSED;
 		room.gameState = null;
+		this.markDirty();
 		return room;
 	}
 
@@ -492,6 +576,7 @@ export class StoreService {
 		room.status = RoomStatus.DEALING;
 		room.gameState = this.createInitialGameState(room, seated.map((s) => s.seatId));
 		room.status = RoomStatus.IN_HAND;
+		this.markDirty();
 
 		return room;
 	}
@@ -632,6 +717,7 @@ export class StoreService {
 			seat.participant.folded = false;
 			seat.participant.allIn = false;
 		});
+		this.markDirty();
 	}
 
 	private isStreetDone(room: RoomRecord): boolean {
@@ -803,6 +889,7 @@ export class StoreService {
 
 		if (this.isStreetDone(room)) {
 			this.moveStreet(room);
+			this.markDirty();
 			return room;
 		}
 
@@ -811,6 +898,7 @@ export class StoreService {
 		state.actionTimerDeadline = nextSeatId
 			? new Date(Date.now() + this.turnTimeoutSec * 1000).toISOString()
 			: null;
+		this.markDirty();
 
 		return room;
 	}
@@ -845,6 +933,7 @@ export class StoreService {
 			seat.participant.allIn = false;
 		});
 		this.setReadyState(room);
+		this.markDirty();
 		return room;
 	}
 
@@ -1044,5 +1133,6 @@ export class StoreService {
 		createSeedRoom('AI Bot Practice Room', RoomType.AI_BOT, 8, false, 1);
 		createSeedRoom('Beginner Cash Table', RoomType.CASH, 8, false, 2);
 		createSeedRoom('Sunday Live Tournament', RoomType.TOURNAMENT, 8, false, 6);
+		this.markDirty();
 	}
 }

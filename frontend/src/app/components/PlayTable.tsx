@@ -2,10 +2,11 @@ import { useLocation, useNavigate } from "react-router";
 import { useEffect, useState } from "react";
 import { ArrowLeft, MessageCircle, Settings, Users, Info, Trophy, Clock, Coins, Target, X, Plus } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { getCurrentAuth } from "../auth";
+import { getCurrentAuth, getCurrentUserId } from "../auth";
+import { apiFetch } from "../api";
 
 type Position = number; // Used as seat index
-type Role = "BTN" | "SB" | "BB" | "UTG" | "MP" | "HJ" | "CO" | "UTG+1";
+type Role = "BTN" | "SB" | "BB" | "UTG" | "MP" | "HJ" | "CO" | "UTG+1" | "UTG+2" | "BTN/SB";
 type GamePhase = "init" | "dealing" | "preflop" | "flop_deal" | "flop" | "turn_deal" | "turn" | "river_deal" | "river" | "showdown";
 
 interface Player {
@@ -18,28 +19,106 @@ interface Player {
   bet: number;
   status: "active" | "folded";
   cardsDealt: boolean;
+  holeCards: string[];
+  seatId?: number;
+}
+
+type LiveActionType = "fold" | "check" | "call" | "bet" | "raise" | "all-in";
+
+interface LiveParticipant {
+  seatId: number;
+  playerId: string;
+  userId?: string;
+  displayName: string;
+  stackAmount: number;
+  currentBetAmount: number;
+  folded: boolean;
+  holeCards: string[];
+}
+
+interface LiveSeat {
+  seatId: number;
+  participant: LiveParticipant | null;
+}
+
+interface LiveRoom {
+  id: string;
+  status: string;
+  maxSeats: number;
+  blindSmall: number;
+  blindBig: number;
+  seats: LiveSeat[];
+}
+
+interface LiveGameState {
+  handId: string;
+  street: string;
+  boardCards: string[];
+  currentTurnSeatId: number | null;
+  minCallAmount: number;
+  minRaiseAmount: number;
+  maxBetAmount: number;
+  potAmount: number;
+  positions: Record<string, string>;
+}
+
+interface LiveGameSnapshot {
+  roomStatus: string;
+  gameState: LiveGameState;
+}
+
+const SUIT_MAP: Record<string, string> = {
+  S: "\u2660",
+  H: "\u2665",
+  D: "\u2666",
+  C: "\u2663",
+};
+
+function toUiCard(card: string) {
+  if (card.length < 2) return card;
+  const rank = card.slice(0, -1);
+  const suit = card.slice(-1).toUpperCase();
+  return `${rank}${SUIT_MAP[suit] ?? suit}`;
+}
+
+function toUiRole(label?: string): Role {
+  if (label === "BTN" || label === "SB" || label === "BB" || label === "UTG" || label === "MP" || label === "HJ" || label === "CO" || label === "UTG+1" || label === "UTG+2" || label === "BTN/SB") {
+    return label;
+  }
+  return "UTG";
+}
+
+function toUiPhase(roomStatus: string, street?: string): GamePhase {
+  if (roomStatus === "HAND_ENDED" || street === "RESULT" || street === "SHOWDOWN") {
+    return "showdown";
+  }
+  if (street === "RIVER") return "river";
+  if (street === "TURN") return "turn";
+  if (street === "FLOP") return "flop";
+  if (street === "PREFLOP") return "preflop";
+  return "init";
 }
 
 const getInitialPlayers = (count: number, max: number): Player[] => {
   const all: Player[] = [
-    { id: "hero", name: "YOU", pos: 0, role: "SB", avatarSeed: "You", chips: 10420, bet: 0, status: "active", cardsDealt: false },
-    { id: "p1", name: "AI Bot 1", pos: 1, role: "BB", avatarSeed: "Felix", chips: 12000, bet: 0, status: "active", cardsDealt: false },
-    { id: "p2", name: "AI Bot 2", pos: 2, role: "UTG", avatarSeed: "Aneka", chips: 9800, bet: 0, status: "active", cardsDealt: false },
-    { id: "p3", name: "AI Bot 3", pos: 3, role: "BTN", avatarSeed: "Oliver", chips: 8500, bet: 0, status: "active", cardsDealt: false },
-    { id: "p4", name: "AI Bot 4", pos: 4, role: "MP", avatarSeed: "Jasper", chips: 11000, bet: 0, status: "active", cardsDealt: false },
-    { id: "p5", name: "AI Bot 5", pos: 5, role: "HJ", avatarSeed: "Zoe", chips: 9200, bet: 0, status: "active", cardsDealt: false },
-    { id: "p6", name: "AI Bot 6", pos: 6, role: "CO", avatarSeed: "Luna", chips: 10500, bet: 0, status: "active", cardsDealt: false },
-    { id: "p7", name: "AI Bot 7", pos: 7, role: "UTG+1", avatarSeed: "Max", chips: 8800, bet: 0, status: "active", cardsDealt: false },
-    { id: "p8", name: "AI Bot 8", pos: 8, role: "UTG+2", avatarSeed: "Leo", chips: 9500, bet: 0, status: "active", cardsDealt: false },
+    { id: "hero", name: "YOU", pos: 0, role: "SB", avatarSeed: "You", chips: 10420, bet: 0, status: "active", cardsDealt: false, holeCards: [] },
+    { id: "p1", name: "AI Bot 1", pos: 1, role: "BB", avatarSeed: "Felix", chips: 12000, bet: 0, status: "active", cardsDealt: false, holeCards: [] },
+    { id: "p2", name: "AI Bot 2", pos: 2, role: "UTG", avatarSeed: "Aneka", chips: 9800, bet: 0, status: "active", cardsDealt: false, holeCards: [] },
+    { id: "p3", name: "AI Bot 3", pos: 3, role: "BTN", avatarSeed: "Oliver", chips: 8500, bet: 0, status: "active", cardsDealt: false, holeCards: [] },
+    { id: "p4", name: "AI Bot 4", pos: 4, role: "MP", avatarSeed: "Jasper", chips: 11000, bet: 0, status: "active", cardsDealt: false, holeCards: [] },
+    { id: "p5", name: "AI Bot 5", pos: 5, role: "HJ", avatarSeed: "Zoe", chips: 9200, bet: 0, status: "active", cardsDealt: false, holeCards: [] },
+    { id: "p6", name: "AI Bot 6", pos: 6, role: "CO", avatarSeed: "Luna", chips: 10500, bet: 0, status: "active", cardsDealt: false, holeCards: [] },
+    { id: "p7", name: "AI Bot 7", pos: 7, role: "UTG+1", avatarSeed: "Max", chips: 8800, bet: 0, status: "active", cardsDealt: false, holeCards: [] },
+    { id: "p8", name: "AI Bot 8", pos: 8, role: "UTG+2", avatarSeed: "Leo", chips: 9500, bet: 0, status: "active", cardsDealt: false, holeCards: [] },
   ];
   
   if (count === 4 && max === 4) {
       // Keep hardcoded positions for 4-player classic layout
       return [
-        { id: "p1", name: "AI Bot 1", pos: 2, role: "UTG", avatarSeed: "Felix", chips: 12000, bet: 0, status: "active", cardsDealt: false },
-        { id: "p2", name: "AI Bot 2", pos: 1, role: "BB", avatarSeed: "Aneka", chips: 9800, bet: 0, status: "active", cardsDealt: false },
-        { id: "p3", name: "AI Bot 3", pos: 3, role: "BTN", avatarSeed: "Oliver", chips: 8500, bet: 0, status: "active", cardsDealt: false },
-        { id: "hero", name: "YOU", pos: 0, role: "SB", avatarSeed: "You", chips: 10420, bet: 0, status: "active", cardsDealt: false },
+        { id: "p1", name: "AI Bot 1", pos: 2, role: "UTG", avatarSeed: "Felix", chips: 12000, bet: 0, status: "active", cardsDealt: false, holeCards: [] },
+        { id: "p2", name: "AI Bot 2", pos: 1, role: "BB", avatarSeed: "Aneka", chips: 9800, bet: 0, status: "active", cardsDealt: false, holeCards: [] },
+        { id: "p3", name: "AI Bot 3", pos: 3, role: "BTN", avatarSeed: "Oliver", chips: 8500, bet: 0, status: "active", cardsDealt: false, holeCards: [] },
+        { id: "hero", name: "YOU", pos: 0, role: "SB", avatarSeed: "You", chips: 10420, bet: 0, status: "active", cardsDealt: false, holeCards: [] },
       ];
   }
   
@@ -109,8 +188,13 @@ export function PlayTable() {
   const location = useLocation();
   const navigate = useNavigate();
   const { isPro } = getCurrentAuth();
+  const currentUserId = getCurrentUserId();
   
   const isTournament = location.state?.mode === "tournament";
+  const queryRoomId = new URLSearchParams(location.search).get("roomId")?.trim() ?? "";
+  const stateRoomId = typeof location.state?.roomId === "string" ? (location.state.roomId as string).trim() : "";
+  const roomId = queryRoomId || stateRoomId;
+  const isLiveMode = !isTournament && roomId.length > 0;
   const isSpectatingStart = location.state?.spectate === true;
   const numPlayers = location.state?.table?.players || 4;
   const maxPlayers = location.state?.table?.max || numPlayers;
@@ -127,6 +211,10 @@ export function PlayTable() {
   const [winner, setWinner] = useState<string | null>(null);
   const [winningCards, setWinningCards] = useState<string[]>([]);
   const [winningHandRank, setWinningHandRank] = useState<string | null>(null);
+  const [liveRoom, setLiveRoom] = useState<LiveRoom | null>(null);
+  const [liveGame, setLiveGame] = useState<LiveGameSnapshot | null>(null);
+  const [heroSeatId, setHeroSeatId] = useState<number | null>(null);
+  const [liveBusy, setLiveBusy] = useState(false);
 
   // Raise Action State
   const [isRaising, setIsRaising] = useState(false);
@@ -140,6 +228,103 @@ export function PlayTable() {
   const [tourneyStage, setTourneyStage] = useState<"Starting Table" | "In The Money (ITM)" | "Semi-Final Table" | "Final Table">("Starting Table");
   const [isTableBreaking, setIsTableBreaking] = useState(false);
   const [nextStageName, setNextStageName] = useState("");
+  const tableSeatCount = isLiveMode ? (liveRoom?.maxSeats ?? maxPlayers) : maxPlayers;
+
+  const syncLiveTable = async () => {
+    if (!isLiveMode) return;
+
+    try {
+      const room = await apiFetch<LiveRoom>(`/rooms/${roomId}`);
+      setLiveRoom(room);
+
+      let game: LiveGameSnapshot | null = null;
+      try {
+        game = await apiFetch<LiveGameSnapshot>(`/game/rooms/${roomId}/state`);
+      } catch {
+        game = null;
+      }
+      setLiveGame(game);
+
+      const seatMap = new Map<number, string>();
+      let mySeat: number | null = null;
+      const mappedPlayers: Player[] = room.seats
+        .filter((seat) => seat.participant)
+        .map((seat) => {
+          const participant = seat.participant as LiveParticipant;
+          const isHero = !!currentUserId && participant.userId === currentUserId;
+          if (isHero) {
+            mySeat = seat.seatId;
+          }
+          const playerId = isHero ? "hero" : `seat-${seat.seatId}`;
+          seatMap.set(seat.seatId, playerId);
+
+          const rawLabel = game?.gameState.positions?.[String(seat.seatId)];
+          return {
+            id: playerId,
+            name: isHero ? "YOU" : participant.displayName,
+            pos: Math.max(0, seat.seatId - 1),
+            role: toUiRole(rawLabel),
+            avatarSeed: participant.displayName,
+            chips: participant.stackAmount,
+            bet: participant.currentBetAmount,
+            status: participant.folded ? "folded" : "active",
+            cardsDealt: participant.holeCards.length > 0,
+            holeCards: participant.holeCards,
+            seatId: seat.seatId,
+          };
+        });
+
+      setPlayers(mappedPlayers);
+      setHeroSeatId(mySeat);
+      setUserState(mySeat === null ? "spectating" : "playing");
+
+      if (game?.gameState) {
+        setPhase(toUiPhase(room.status, game.gameState.street));
+        setCommunityCards(game.gameState.boardCards.map(toUiCard));
+        setPot(game.gameState.potAmount);
+        setActiveTurn(
+          game.gameState.currentTurnSeatId
+            ? seatMap.get(game.gameState.currentTurnSeatId) ?? null
+            : null,
+        );
+      } else {
+        setPhase("init");
+        setCommunityCards([]);
+        setPot(0);
+        setActiveTurn(null);
+      }
+
+      if (room.status === "HAND_ENDED") {
+        setLog("Hand complete. Ready for next hand.");
+      } else if (room.status === "IN_HAND") {
+        setLog("Live hand in progress");
+      } else {
+        setLog("Waiting to start...");
+      }
+
+      setHeroEquity(null);
+      setWinner(null);
+      setWinningCards([]);
+      setWinningHandRank(null);
+      setGameStarted(room.status !== "WAITING_SETUP");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load room state.";
+      setLog(message);
+    }
+  };
+
+  useEffect(() => {
+    if (!isLiveMode) return;
+
+    void syncLiveTable();
+    const timer = setInterval(() => {
+      if (!liveBusy) {
+        void syncLiveTable();
+      }
+    }, 2500);
+
+    return () => clearInterval(timer);
+  }, [isLiveMode, roomId, currentUserId, liveBusy]);
 
   useEffect(() => {
     if (!isTournament) return;
@@ -162,13 +347,15 @@ export function PlayTable() {
   }, [tourneyPlayersLeft, tourneyStage, isTournament]);
 
   useEffect(() => {
+    if (isLiveMode) return;
     // Hide Hero's cards if spectating initially
     if (userState !== "playing" && phase === "init") {
        setPlayers(prev => prev.map(p => p.id === "hero" ? { ...p, status: "folded" } : p));
     }
-  }, [userState, phase]);
+  }, [userState, phase, isLiveMode]);
 
   useEffect(() => {
+    if (isLiveMode) return;
     let timeout: NodeJS.Timeout;
 
     if (phase === "init") {
@@ -342,10 +529,11 @@ export function PlayTable() {
     }
 
     return () => clearTimeout(timeout);
-  }, [phase, isTournament, userState, gameStarted]);
+  }, [phase, isTournament, userState, gameStarted, isLiveMode]);
 
   // Handle Timeout (Auto fold or auto check)
   useEffect(() => {
+    if (isLiveMode) return;
     if (activeTurn !== "hero") return;
     
     // 15초 제한 시간
@@ -361,7 +549,7 @@ export function PlayTable() {
     }, 15000);
 
     return () => clearTimeout(timer);
-  }, [activeTurn, phase]);
+  }, [activeTurn, phase, isLiveMode]);
 
   const resetHand = () => {
     setLog("Hand Complete. Hand saved to Review Log.");
@@ -394,8 +582,106 @@ export function PlayTable() {
     }, 2500);
   };
 
+  const handleLiveStartOrNext = async () => {
+    if (!isLiveMode || !liveRoom) return;
+
+    setLiveBusy(true);
+    try {
+      if (liveRoom.status === "HAND_ENDED") {
+        await apiFetch(`/game/rooms/${roomId}/next-hand`, { method: "POST" });
+      } else {
+        await apiFetch(`/rooms/${roomId}/start-game`, { method: "POST" });
+      }
+      await syncLiveTable();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "요청 처리에 실패했습니다.");
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
+  const handleSitOut = async () => {
+    if (!isLiveMode) {
+      setUserState("spectating");
+      setLog("You are now sitting out.");
+      return;
+    }
+
+    if (heroSeatId === null) {
+      setUserState("spectating");
+      return;
+    }
+
+    setLiveBusy(true);
+    try {
+      await apiFetch(`/rooms/${roomId}/seats/${heroSeatId}/leave`, { method: "POST" });
+      await syncLiveTable();
+      setLog("You left your seat.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "자리 이탈 처리에 실패했습니다.");
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
   const handleHeroAction = (action: "fold" | "call" | "raise", amount?: number) => {
     if (activeTurn !== "hero") return;
+
+    if (isLiveMode) {
+      const state = liveGame?.gameState;
+      if (!state) return;
+
+      const sendLiveAction = async () => {
+        const payload: { action: LiveActionType; amount?: number } = {
+          action: "check",
+        };
+
+        if (action === "fold") {
+          payload.action = "fold";
+        } else if (action === "call") {
+          payload.action = state.minCallAmount > 0 ? "call" : "check";
+        } else {
+          const inputAmount = Number.isFinite(amount ?? NaN)
+            ? Number(amount)
+            : Number(raiseAmount);
+          if (!Number.isFinite(inputAmount) || inputAmount <= 0) {
+            alert("유효한 레이즈 금액을 입력해 주세요.");
+            return;
+          }
+
+          const hero = players.find((player) => player.id === "hero");
+          const effectiveStack = hero ? hero.chips + hero.bet : 0;
+
+          if (effectiveStack > 0 && inputAmount >= effectiveStack) {
+            payload.action = "all-in";
+          } else if (state.maxBetAmount > 0) {
+            payload.action = "raise";
+            payload.amount = Math.floor(inputAmount);
+          } else {
+            payload.action = "bet";
+            payload.amount = Math.floor(inputAmount);
+          }
+        }
+
+        setLiveBusy(true);
+        try {
+          await apiFetch(`/game/rooms/${roomId}/act`, {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          setIsRaising(false);
+          setRaiseAmount("");
+          await syncLiveTable();
+        } catch (error) {
+          alert(error instanceof Error ? error.message : "액션 처리에 실패했습니다.");
+        } finally {
+          setLiveBusy(false);
+        }
+      };
+
+      void sendLiveAction();
+      return;
+    }
 
     if (action === "raise") {
       const raiseVal = amount || pot;
@@ -601,7 +887,10 @@ export function PlayTable() {
         <div className="flex gap-4 pointer-events-auto">
           {userState === "playing" && !isTournament && (
             <button 
-              onClick={() => { setUserState("spectating"); setLog("You are now sitting out."); }}
+              onClick={() => {
+                void handleSitOut();
+              }}
+              disabled={liveBusy}
               className="px-4 py-2 bg-orange-600/80 hover:bg-orange-500/80 rounded-full text-white font-bold text-sm backdrop-blur-md border border-orange-400/30 transition shadow-lg"
             >
               Sit Out
@@ -642,9 +931,11 @@ export function PlayTable() {
               <Coins className="w-4 h-4"/>
               Cash Game
             </div>
-            <div className="text-white font-bold text-sm mt-1">Blinds: <span className="text-slate-300">50 / 100</span></div>
+            <div className="text-white font-bold text-sm mt-1">
+              Blinds: <span className="text-slate-300">{liveRoom ? `${liveRoom.blindSmall} / ${liveRoom.blindBig}` : "-"}</span>
+            </div>
             <div className="text-slate-400 font-semibold text-[10px] mt-1 border-t border-white/10 pt-1">
-              No limit on rebuys
+              {isLiveMode ? "Live room data" : "No limit on rebuys"}
             </div>
           </>
         )}
@@ -709,15 +1000,27 @@ export function PlayTable() {
         </div>
 
         {/* START GAME / DEAL HAND Button */}
-        {phase === "init" && userState === "playing" && (
+        {((!isLiveMode && phase === "init" && userState === "playing") ||
+          (isLiveMode && liveRoom && (liveRoom.status === "WAITING_SETUP" || liveRoom.status === "READY" || liveRoom.status === "HAND_ENDED"))) && (
           <button 
             onClick={() => {
+              if (isLiveMode) {
+                void handleLiveStartOrNext();
+                return;
+              }
               if (!gameStarted) setGameStarted(true);
               setPhase("dealing");
             }}
+            disabled={liveBusy}
             className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-3 md:px-8 md:py-4 bg-gradient-to-r from-green-500 to-emerald-400 text-white font-black text-xl md:text-2xl rounded-full shadow-[0_0_20px_rgba(34,197,94,0.5)] hover:scale-105 transition-transform z-50 uppercase tracking-widest border border-white/20"
           >
-            {gameStarted ? "Deal Hand" : "Start Game"}
+            {isLiveMode
+              ? liveRoom?.status === "HAND_ENDED"
+                ? "Next Hand"
+                : "Start Game"
+              : gameStarted
+                ? "Deal Hand"
+                : "Start Game"}
           </button>
         )}
 
@@ -739,11 +1042,11 @@ export function PlayTable() {
       </div>
 
       {/* Render Empty Seats */}
-      {!isTournament && Array.from({ length: maxPlayers }).map((_, i) => {
+      {!isTournament && Array.from({ length: tableSeatCount }).map((_, i) => {
         if (players.find(p => p.pos === i)) return null;
         if (phase !== "init" && phase !== "showdown") return null; // Only allow adding between hands
         return (
-          <div key={`empty-${i}`} className="absolute flex flex-col items-center z-20" style={getPlayerPosStyle(i, maxPlayers)}>
+          <div key={`empty-${i}`} className="absolute flex flex-col items-center z-20" style={getPlayerPosStyle(i, tableSeatCount)}>
              <button 
                onClick={() => setSelectedSeat(i)}
                className="w-20 h-20 md:w-24 md:h-24 rounded-full border-2 border-dashed border-white/20 bg-black/20 hover:bg-white/10 hover:border-white/50 flex flex-col items-center justify-center transition group shadow-inner"
@@ -757,9 +1060,9 @@ export function PlayTable() {
 
       {/* Render Players */}
       {players.map((p) => (
-        <div key={p.id} className={`absolute flex flex-col items-center z-30 transition-all ${p.id === 'hero' && userState !== 'playing' ? 'opacity-40 grayscale sepia' : ''}`} style={getPlayerPosStyle(p.pos, maxPlayers)}>
+        <div key={p.id} className={`absolute flex flex-col items-center z-30 transition-all ${p.id === 'hero' && userState !== 'playing' ? 'opacity-40 grayscale sepia' : ''}`} style={getPlayerPosStyle(p.pos, tableSeatCount)}>
           
-          <div className="absolute z-20" style={getBetPosStyle(p.pos, maxPlayers)}>
+          <div className="absolute z-20" style={getBetPosStyle(p.pos, tableSeatCount)}>
             <ChipStack amount={p.bet} />
           </div>
 
@@ -794,9 +1097,22 @@ export function PlayTable() {
                   : (phase === 'showdown' && p.status !== 'folded' ? 'top-10 md:top-14 scale-110 z-50' : 'top-[70%] left-1/2 -translate-x-1/2 md:top-[80%] scale-90 md:scale-100 z-10')
                 } pointer-events-none transition-all duration-500`}>
                 {p.cardsDealt && p.id === 'hero' && userState !== 'playing' ? null : p.cardsDealt && (() => {
-                  const botCards: Record<string, [string, string]> = { p1: ["7♥", "7♦"], p2: ["2♠", "2���"], p3: ["9♠", "8♠"] };
-                  const pCards = p.id === 'hero' ? HERO_CARDS : { p1: ["7♥", "7♦"], p2: ["2♠", "2♦"], p3: ["9♠", "8♠"], p4: ["3♣", "4♣"], p5: ["J♦", "Q♦"], p6: ["A♥", "10♥"], p7: ["5♠", "6♠"] }[p.id] as [string, string];
-                  const showCards = p.id === 'hero' || (phase === 'showdown' && p.status !== 'folded');
+                  const fallbackCards: Record<string, [string, string]> = {
+                    p1: ["7♥", "7♦"],
+                    p2: ["2♠", "2♦"],
+                    p3: ["9♠", "8♠"],
+                    p4: ["3♣", "4♣"],
+                    p5: ["J♦", "Q♦"],
+                    p6: ["A♥", "10♥"],
+                    p7: ["5♠", "6♠"],
+                  };
+                  const liveCards = p.holeCards.map(toUiCard);
+                  const pCards = isLiveMode
+                    ? ([liveCards[0] ?? "", liveCards[1] ?? ""] as [string, string])
+                    : (p.id === 'hero' ? HERO_CARDS : fallbackCards[p.id] ?? ["", ""]);
+                  const showCards = isLiveMode
+                    ? (p.id === 'hero' ? liveCards.length === 2 : (phase === 'showdown' && p.status !== 'folded' && liveCards.length === 2))
+                    : (p.id === 'hero' || (phase === 'showdown' && p.status !== 'folded'));
                   const c1Winner = phase === 'showdown' && winner === p.id && winningCards.includes(pCards?.[0] || "");
                   const c2Winner = phase === 'showdown' && winner === p.id && winningCards.includes(pCards?.[1] || "");
                   const isHeroShowdown = p.id === 'hero' && phase === 'showdown';
@@ -906,7 +1222,7 @@ export function PlayTable() {
                   />
                   <button 
                     onClick={() => handleHeroAction("raise", Number(raiseAmount))}
-                    disabled={!raiseAmount || Number(raiseAmount) <= 0}
+                    disabled={!raiseAmount || Number(raiseAmount) <= 0 || liveBusy}
                     className="bg-red-500 hover:bg-red-400 disabled:opacity-50 disabled:bg-slate-700 text-white font-black px-6 py-2 rounded-xl shadow-[0_4px_0_#991B1B] active:translate-y-1 active:shadow-none transition uppercase"
                   >
                     Confirm
@@ -917,18 +1233,25 @@ export function PlayTable() {
               <motion.div key="action-buttons" className="flex gap-2 md:gap-4" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}>
                 <button 
                   onClick={() => handleHeroAction("fold")}
+                  disabled={liveBusy}
                   className="bg-slate-700 hover:bg-slate-600 text-white font-bold px-6 py-4 md:px-10 md:py-5 rounded-xl md:rounded-2xl shadow-[0_6px_0_#334155] active:translate-y-2 active:shadow-none transition uppercase tracking-wider text-sm md:text-lg"
                 >
                   Fold
                 </button>
                 <button 
                   onClick={() => handleHeroAction("call")}
+                  disabled={liveBusy}
                   className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-black px-6 py-4 md:px-10 md:py-5 rounded-xl md:rounded-2xl shadow-[0_6px_0_#A16207] active:translate-y-2 active:shadow-none transition uppercase tracking-wider text-sm md:text-lg"
                 >
-                  {phase === "preflop" ? "Call 50" : "Check"}
+                  {isLiveMode
+                    ? ((liveGame?.gameState.minCallAmount ?? 0) > 0
+                      ? `Call ${liveGame?.gameState.minCallAmount ?? 0}`
+                      : "Check")
+                    : (phase === "preflop" ? "Call 50" : "Check")}
                 </button>
                 <button 
                   onClick={() => setIsRaising(true)}
+                  disabled={liveBusy}
                   className="bg-red-500 hover:bg-red-400 text-white font-black px-6 py-4 md:px-10 md:py-5 rounded-xl md:rounded-2xl shadow-[0_6px_0_#991B1B] active:translate-y-2 active:shadow-none transition uppercase tracking-wider text-sm md:text-lg"
                 >
                   Raise
@@ -940,6 +1263,7 @@ export function PlayTable() {
       </AnimatePresence>
 
       {/* Spectator & Waitlist Controls */}
+      {!isLiveMode && (
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center pointer-events-none">
          <AnimatePresence>
            {userState === "spectating" && (
@@ -987,6 +1311,7 @@ export function PlayTable() {
            )}
          </AnimatePresence>
       </div>
+      )}
 
       <button className="absolute bottom-4 md:bottom-8 left-4 md:left-8 p-3 md:p-5 bg-indigo-600 hover:bg-indigo-500 rounded-full shadow-xl border-2 border-indigo-400/30 text-white transition z-40">
         <MessageCircle className="w-6 h-6 md:w-8 md:h-8" />
@@ -1049,22 +1374,54 @@ export function PlayTable() {
                  </div>
                  <button 
                    onClick={() => {
-                     const style = (document.getElementById("botPlayStyle") as HTMLSelectElement)?.value || "balanced";
-                     const newId = `p${selectedSeat}`;
-                     const avatars = ["Felix", "Aneka", "Oliver", "Jasper", "Zoe", "Luna", "Max", "Leo"];
-                     const newBot: Player = {
-                       id: newId,
-                       name: `Bot (${style})`,
-                       pos: selectedSeat,
-                       role: "BTN",
-                       avatarSeed: avatars[selectedSeat] || "Max",
-                       chips: 10000,
-                       bet: 0,
-                       status: "active",
-                       cardsDealt: false
+                     const addBot = async () => {
+                       const styleRaw = (document.getElementById("botPlayStyle") as HTMLSelectElement)?.value || "balanced";
+                       if (selectedSeat === null) return;
+
+                       if (isLiveMode) {
+                         const normalizedStyle = styleRaw === "gto-wizard" ? "balanced" : styleRaw;
+                         const modelTier = styleRaw === "gto-wizard" ? "paid" : "free";
+                         const provider = styleRaw === "gto-wizard" ? "openai" : "local";
+
+                         setLiveBusy(true);
+                         try {
+                           await apiFetch(`/rooms/${roomId}/seats/${selectedSeat + 1}/bot`, {
+                             method: "POST",
+                             body: JSON.stringify({
+                               modelTier,
+                               provider,
+                               style: normalizedStyle,
+                             }),
+                           });
+                           setSelectedSeat(null);
+                           await syncLiveTable();
+                         } catch (error) {
+                           alert(error instanceof Error ? error.message : "봇 추가에 실패했습니다.");
+                         } finally {
+                           setLiveBusy(false);
+                         }
+                         return;
+                       }
+
+                       const newId = `p${selectedSeat}`;
+                       const avatars = ["Felix", "Aneka", "Oliver", "Jasper", "Zoe", "Luna", "Max", "Leo"];
+                       const newBot: Player = {
+                         id: newId,
+                         name: `Bot (${styleRaw})`,
+                         pos: selectedSeat,
+                         role: "BTN",
+                         avatarSeed: avatars[selectedSeat] || "Max",
+                         chips: 10000,
+                         bet: 0,
+                         status: "active",
+                         cardsDealt: false,
+                         holeCards: [],
+                       };
+                       setPlayers(prev => [...prev, newBot]);
+                       setSelectedSeat(null);
                      };
-                     setPlayers(prev => [...prev, newBot]);
-                     setSelectedSeat(null);
+
+                     void addBot();
                    }}
                    className="mt-4 w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black py-4 rounded-xl transition shadow-lg flex items-center justify-center gap-2 uppercase tracking-wider"
                  >
