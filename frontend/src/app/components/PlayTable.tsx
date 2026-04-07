@@ -30,6 +30,14 @@ interface Player {
 type LiveActionType = "fold" | "check" | "call" | "bet" | "raise" | "all-in";
 type ActionFxType = "check" | "call" | "bet" | "raise" | "fold" | "all-in";
 
+interface PersistentAggroFx {
+  playerId: string;
+  handId: string;
+  street: string;
+  type: "bet" | "raise";
+  maxBetAmount: number;
+}
+
 interface LiveParticipant {
   seatId: number;
   playerId: string;
@@ -276,11 +284,47 @@ const FULL_COMMUNITY_CARDS = ["Q♠", "J♠", "10♠", "2♥", "5♣"];
 const HERO_CARDS = ["A♠", "K♠"];
 const TURN_TIMER_SECONDS = 15;
 const SHOWDOWN_RESULT_DISPLAY_MS = 8000;
+const SHOWDOWN_RESULT_DISPLAY_HUMAN_MS = 14000;
 const QUICK_RESULT_DISPLAY_MS = 8000;
 const HAND_RESET_CLEANUP_MS = 5000;
 const LIVE_SYNC_INTERVAL_MS = 600;
 const ACTION_FX_DURATION_MS = 1000;
 const SHOWDOWN_AFTER_ACTION_DELAY_MS = 800;
+
+const AVATAR_TOP_OPTIONS = ["shortFlat", "shortCurly", "straight01", "longButNotTooLong", "bob", "hat", "hijab", "turban"];
+const AVATAR_OUTFIT_OPTIONS = ["hoodie", "blazerAndShirt", "blazerAndSweater", "graphicShirt", "shirtCrewNeck", "shirtVNeck"];
+const AVATAR_EYE_OPTIONS = ["default", "happy", "wink", "surprised", "squint"];
+const AVATAR_MOUTH_OPTIONS = ["smile", "default", "serious", "sad", "twinkle"];
+const AVATAR_FACE_OPTIONS = ["default", "defaultNatural", "raisedExcited", "sadConcerned", "upDown"];
+const AVATAR_SKIN_COLORS = ["ffdbb4", "edb98a", "d08b5b", "ae5d29", "614335", "fd9841", "f8d25c"];
+const AVATAR_HAIR_COLORS = ["2c1b18", "a55728", "724133", "d6b370", "c93305", "f59797", "e8e1e1"];
+
+function pickRandom<T>(items: readonly T[]): T {
+  return items[Math.floor(Math.random() * items.length)] as T;
+}
+
+function createRandomAvatarInfo(): NonNullable<LiveParticipant["avatarInfo"]> {
+  return {
+    hairStyle: pickRandom(AVATAR_TOP_OPTIONS),
+    skinTone: pickRandom(AVATAR_SKIN_COLORS),
+    hairColor: pickRandom(AVATAR_HAIR_COLORS),
+    faceType: pickRandom(AVATAR_FACE_OPTIONS),
+    eyeType: pickRandom(AVATAR_EYE_OPTIONS),
+    mouthType: pickRandom(AVATAR_MOUTH_OPTIONS),
+    outfit: pickRandom(AVATAR_OUTFIT_OPTIONS),
+  };
+}
+
+function getLiveShowdownDisplayMs(room: LiveRoom): number {
+  const humanCount = room.seats.reduce((count, seat) => {
+    const participant = seat.participant;
+    if (!participant) return count;
+    const isHuman = participant.roleType === "human" || Boolean(participant.userId);
+    return isHuman ? count + 1 : count;
+  }, 0);
+
+  return humanCount >= 2 ? SHOWDOWN_RESULT_DISPLAY_HUMAN_MS : SHOWDOWN_RESULT_DISPLAY_MS;
+}
 
 const RAW_SUITS = ["S", "H", "D", "C"];
 const RAW_RANKS = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"];
@@ -589,6 +633,7 @@ export function PlayTable() {
   const autoNextHandKeyRef = useRef<string | null>(null);
   const lastSeenLiveActionKeyRef = useRef<string | null>(null);
   const [actionFxByPlayer, setActionFxByPlayer] = useState<Record<string, { type: ActionFxType; expiresAt: number }>>({});
+  const [persistentAggroFx, setPersistentAggroFx] = useState<PersistentAggroFx | null>(null);
   const [showdownDelayUntil, setShowdownDelayUntil] = useState(0);
 
   // Raise Action State
@@ -653,6 +698,19 @@ export function PlayTable() {
   const turnTimerResetToken = isLiveMode
     ? `${liveGame?.gameState?.handId ?? "no-hand"}:${liveGame?.gameState?.street ?? "no-street"}:${liveGame?.gameState?.currentTurnSeatId ?? "none"}:${liveGame?.gameState?.minCallAmount ?? 0}:${liveGame?.gameState?.maxBetAmount ?? 0}`
     : `${phase}:${activeTurn ?? "none"}`;
+  const heroPlayer = players.find((player) => player.id === "hero");
+  const parsedRaiseAmount = Number.parseInt(raiseAmount, 10);
+  const normalizedRaiseAmount = Number.isFinite(parsedRaiseAmount)
+    ? Math.max(0, Math.floor(parsedRaiseAmount))
+    : 0;
+  const liveMinRaiseTo = isLiveMode && liveGame?.gameState
+    ? (liveGame.gameState.maxBetAmount > 0
+      ? liveGame.gameState.maxBetAmount + Math.max(liveGame.gameState.minRaiseAmount, liveRoom?.blindBig ?? 0)
+      : Math.max(liveGame.gameState.minRaiseAmount, liveRoom?.blindBig ?? 1))
+    : 0;
+  const canConfirmRaise = isLiveMode
+    ? normalizedRaiseAmount > 0 && !actionBusy && normalizedRaiseAmount >= liveMinRaiseTo
+    : normalizedRaiseAmount > 0 && !actionBusy;
 
   useEffect(() => {
     showdownHoldUntilRef.current = showdownHoldUntil;
@@ -679,6 +737,7 @@ export function PlayTable() {
   useEffect(() => {
     if (!isLiveMode) {
       setPendingHeroAction(false);
+      setPersistentAggroFx(null);
       return;
     }
 
@@ -887,6 +946,14 @@ export function PlayTable() {
 
       if (game?.gameState) {
         const nextState = game.gameState;
+        setPersistentAggroFx((prev) => {
+          if (!prev) return prev;
+          if (prev.handId !== nextState.handId || prev.street !== nextState.street) {
+            return null;
+          }
+          return prev;
+        });
+
         const latestAction = nextState.actions?.[nextState.actions.length - 1];
         const latestActionKey = latestAction
           ? `${nextState.handId}:${latestAction.order}:${latestAction.action}`
@@ -897,7 +964,28 @@ export function PlayTable() {
 
           const actorPlayerId = seatMap.get(latestAction.seatId);
           if (actorPlayerId) {
-            triggerActionFx(actorPlayerId, latestAction.action as ActionFxType);
+            if (latestAction.action === "bet" || latestAction.action === "raise") {
+              const nextAggroFx: PersistentAggroFx = {
+                playerId: actorPlayerId,
+                handId: nextState.handId,
+                street: nextState.street,
+                type: latestAction.action,
+                maxBetAmount: nextState.maxBetAmount,
+              };
+              setPersistentAggroFx((prev) => {
+                if (
+                  !prev ||
+                  prev.handId !== nextState.handId ||
+                  prev.street !== nextState.street ||
+                  nextState.maxBetAmount >= prev.maxBetAmount
+                ) {
+                  return nextAggroFx;
+                }
+                return prev;
+              });
+            } else {
+              triggerActionFx(actorPlayerId, latestAction.action as ActionFxType);
+            }
           }
 
           const shouldDelayShowdown =
@@ -945,7 +1033,7 @@ export function PlayTable() {
           setWinningCards((prev) => (sameStringArray(prev, winnerUiCards) ? prev : winnerUiCards));
           if (lastResultHandIdRef.current !== nextState.handId) {
             lastResultHandIdRef.current = nextState.handId;
-            const holdUntil = Date.now() + SHOWDOWN_RESULT_DISPLAY_MS;
+            const holdUntil = Date.now() + getLiveShowdownDisplayMs(room);
             showdownHoldUntilRef.current = holdUntil;
             setShowdownHoldUntil(holdUntil);
           }
@@ -971,6 +1059,7 @@ export function PlayTable() {
         }
       } else {
         lastSeenLiveActionKeyRef.current = null;
+        setPersistentAggroFx(null);
         setPhase((prev) => (prev === "init" ? prev : "init"));
         setCommunityCards((prev) => (prev.length === 0 ? prev : []));
         setPot((prev) => (prev === 0 ? prev : 0));
@@ -1973,10 +2062,11 @@ export function PlayTable() {
           : activeTurn === p.id;
         const isTimerActive = isPlayerTurn;
         const actionFx = actionFxByPlayer[p.id];
+        const persistentAggroType = persistentAggroFx?.playerId === p.id ? persistentAggroFx.type : null;
         const hasCheckFx = actionFx?.type === "check";
         const hasCallFx = actionFx?.type === "call";
-        const hasBetFx = actionFx?.type === "bet";
-        const hasRaiseFx = actionFx?.type === "raise";
+        const hasBetFx = actionFx?.type === "bet" || persistentAggroType === "bet";
+        const hasRaiseFx = actionFx?.type === "raise" || persistentAggroType === "raise";
         const hasFoldFx = actionFx?.type === "fold";
         const hasAllInFx = Boolean(p.allIn) || actionFx?.type === "all-in";
         const roleBadgeClass =
@@ -2098,7 +2188,7 @@ export function PlayTable() {
           <div className={`relative w-20 h-20 md:w-24 md:h-24 rounded-full border-4 shadow-2xl z-30 bg-slate-800 ${avatarStateClass} ${hasFoldFx ? 'ring-4 ring-red-500/50' : ''} ${p.status === 'folded' ? 'opacity-50 grayscale' : ''}`}>
             <TimerRing isActive={isTimerActive} duration={TURN_TIMER_SECONDS} resetToken={turnTimerResetToken} />
             
-            <div className={`absolute -right-2 -top-2 md:-right-3 md:-top-3 w-8 h-8 md:w-10 md:h-10 rounded-full border-2 border-slate-900 flex items-center justify-center text-[10px] md:text-xs font-black shadow-lg ${roleBadgeClass}`}>
+            <div className={`absolute -right-2 -top-2 md:-right-3 md:-top-3 w-8 h-8 md:w-10 md:h-10 rounded-full border-2 border-slate-900 flex items-center justify-center text-[10px] md:text-xs font-black shadow-lg z-30 ${roleBadgeClass}`}>
               {p.role}
             </div>
 
@@ -2109,7 +2199,7 @@ export function PlayTable() {
                 initial={{ opacity: 0, y: 6, scale: 0.9 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -4, scale: 0.9 }}
-                className="absolute inset-0 bg-black/55 rounded-full flex items-center justify-center"
+                className="absolute inset-0 z-20 bg-black/55 rounded-full flex items-center justify-center"
               >
                 <span className={`px-2.5 py-1 rounded-full border text-[10px] md:text-xs font-black tracking-wider shadow-lg flex items-center gap-1 ${actionOverlayTone}`}>
                   {hasCheckFx ? <Check className="w-3 h-3" /> : null}
@@ -2173,7 +2263,7 @@ export function PlayTable() {
                   {phase === "preflop" && (
                     <button onClick={() => setRaiseAmount(String(pot * 3))} className="flex-1 bg-slate-700 hover:bg-slate-600 py-1.5 rounded-lg text-xs font-bold text-white transition">{t("3-Bet")}</button>
                   )}
-                  <button onClick={() => setRaiseAmount(String(players.find(p=>p.id==='hero')?.chips || 0))} className="flex-1 bg-red-900/80 hover:bg-red-800 py-1.5 rounded-lg text-xs font-bold text-red-200 transition border border-red-500/50">{t("All-In")}</button>
+                  <button onClick={() => setRaiseAmount(String((heroPlayer?.chips ?? 0) + (heroPlayer?.bet ?? 0)))} className="flex-1 bg-red-900/80 hover:bg-red-800 py-1.5 rounded-lg text-xs font-bold text-red-200 transition border border-red-500/50">{t("All-In")}</button>
                 </div>
                 <div className="flex gap-2 mt-1">
                   <input 
@@ -2185,12 +2275,17 @@ export function PlayTable() {
                   />
                   <button 
                     onClick={() => handleHeroAction("raise", Number(raiseAmount))}
-                    disabled={!raiseAmount || Number(raiseAmount) <= 0 || actionBusy}
+                    disabled={!canConfirmRaise}
                     className="bg-red-500 hover:bg-red-400 disabled:opacity-50 disabled:bg-slate-700 text-white font-black px-6 py-2 rounded-xl shadow-[0_4px_0_#991B1B] active:translate-y-1 active:shadow-none transition uppercase"
                   >
                     {t("Confirm")}
                   </button>
                 </div>
+                {isLiveMode && (
+                  <div className="text-[11px] text-slate-300 mt-1">
+                    Min raise to: <span className="text-cyan-300 font-bold">{liveMinRaiseTo}</span>
+                  </div>
+                )}
               </motion.div>
             ) : (
               <motion.div key="action-buttons" className="flex gap-2 md:gap-4" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}>
@@ -2213,7 +2308,12 @@ export function PlayTable() {
                     : (phase === "preflop" ? `${t("Call")} 50` : t("Check"))}
                 </button>
                 <button 
-                  onClick={() => setIsRaising(true)}
+                  onClick={() => {
+                    if (isLiveMode && liveMinRaiseTo > 0) {
+                      setRaiseAmount(String(liveMinRaiseTo));
+                    }
+                    setIsRaising(true);
+                  }}
                   disabled={actionBusy}
                   className="bg-red-500 hover:bg-red-400 text-white font-black px-6 py-4 md:px-10 md:py-5 rounded-xl md:rounded-2xl shadow-[0_6px_0_#991B1B] active:translate-y-2 active:shadow-none transition uppercase tracking-wider text-sm md:text-lg"
                 >
@@ -2380,13 +2480,15 @@ export function PlayTable() {
                        }
 
                        const newId = `p${selectedSeat}`;
-                       const avatars = ["Felix", "Aneka", "Oliver", "Jasper", "Zoe", "Luna", "Max", "Leo"];
+                       const avatarInfo = createRandomAvatarInfo();
+                       const avatarSeed = `bot-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
                        const newBot: Player = {
                          id: newId,
                          name: `${selectedModel.label} (${botStyle})`,
                          pos: selectedSeat,
                          role: "BTN",
-                         avatarSeed: avatars[selectedSeat] || "Max",
+                         avatarSeed,
+                         avatarUrl: toAvatarUrl(avatarSeed, avatarInfo),
                          chips: 10000,
                          bet: 0,
                          status: "active",

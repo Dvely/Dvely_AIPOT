@@ -46,6 +46,74 @@ const DEFAULT_AVATAR: AvatarConfig = {
 	outfit: 'hoodie',
 };
 
+const BOT_AVATAR_TOP_OPTIONS = [
+	'shortFlat',
+	'shortCurly',
+	'straight01',
+	'longButNotTooLong',
+	'bob',
+	'hat',
+	'hijab',
+	'turban',
+];
+
+const BOT_AVATAR_OUTFIT_OPTIONS = [
+	'hoodie',
+	'blazerAndShirt',
+	'blazerAndSweater',
+	'graphicShirt',
+	'shirtCrewNeck',
+	'shirtVNeck',
+];
+
+const BOT_AVATAR_EYE_OPTIONS = [
+	'default',
+	'happy',
+	'wink',
+	'surprised',
+	'squint',
+];
+
+const BOT_AVATAR_MOUTH_OPTIONS = [
+	'smile',
+	'default',
+	'serious',
+	'sad',
+	'twinkle',
+];
+
+const BOT_AVATAR_FACE_OPTIONS = [
+	'default',
+	'defaultNatural',
+	'raisedExcited',
+	'sadConcerned',
+	'upDown',
+];
+
+const BOT_AVATAR_SKIN_COLORS = [
+	'ffdbb4',
+	'edb98a',
+	'd08b5b',
+	'ae5d29',
+	'614335',
+	'fd9841',
+	'f8d25c',
+];
+
+const BOT_AVATAR_HAIR_COLORS = [
+	'2c1b18',
+	'a55728',
+	'724133',
+	'd6b370',
+	'c93305',
+	'f59797',
+	'e8e1e1',
+];
+
+function pickRandom<T>(items: readonly T[]): T {
+	return items[Math.floor(Math.random() * items.length)] as T;
+}
+
 const DEFAULT_ACCOUNT_BALANCE = 10000;
 const DEFAULT_GUEST_BALANCE = 1000;
 const PRIVATE_AI_BOT_NEXT_HAND_DELAY_MS = 2500;
@@ -108,6 +176,18 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			clearInterval(this.timeoutTicker);
 			this.timeoutTicker = null;
 		}
+	}
+
+	private createRandomBotAvatar(): AvatarConfig {
+		return {
+			hairStyle: pickRandom(BOT_AVATAR_TOP_OPTIONS),
+			skinTone: pickRandom(BOT_AVATAR_SKIN_COLORS),
+			hairColor: pickRandom(BOT_AVATAR_HAIR_COLORS),
+			faceType: pickRandom(BOT_AVATAR_FACE_OPTIONS),
+			eyeType: pickRandom(BOT_AVATAR_EYE_OPTIONS),
+			mouthType: pickRandom(BOT_AVATAR_MOUTH_OPTIONS),
+			outfit: pickRandom(BOT_AVATAR_OUTFIT_OPTIONS),
+		};
 	}
 
 	private snapshotPayload() {
@@ -813,7 +893,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			folded: false,
 			allIn: false,
 			connected: true,
-			avatarInfo: null,
+			avatarInfo: this.createRandomBotAvatar(),
 			holeCards: [],
 			botConfig: params.config,
 		};
