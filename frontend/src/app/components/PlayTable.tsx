@@ -8,6 +8,7 @@ import { apiFetch } from "../api";
 type Position = number; // Used as seat index
 type Role = "BTN" | "SB" | "BB" | "UTG" | "MP" | "HJ" | "CO" | "UTG+1" | "UTG+2" | "UTG+3" | "UTG+4" | "UTG+5" | "BTN/SB";
 type GamePhase = "init" | "dealing" | "preflop" | "flop_deal" | "flop" | "turn_deal" | "turn" | "river_deal" | "river" | "showdown";
+type HandScore = { category: number; values: number[] };
 
 interface Player {
   id: string;
@@ -246,6 +247,200 @@ const getInitialPlayers = (count: number, max: number): Player[] => {
 const FULL_COMMUNITY_CARDS = ["Q♠", "J♠", "10♠", "2♥", "5♣"];
 const HERO_CARDS = ["A♠", "K♠"];
 
+const RAW_SUITS = ["S", "H", "D", "C"];
+const RAW_RANKS = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"];
+
+function createRawDeck(): string[] {
+  return RAW_SUITS.flatMap((suit) => RAW_RANKS.map((rank) => `${rank}${suit}`));
+}
+
+function parseRawRank(rankToken: string): number {
+  if (rankToken === "A") return 14;
+  if (rankToken === "K") return 13;
+  if (rankToken === "Q") return 12;
+  if (rankToken === "J") return 11;
+  if (rankToken === "T") return 10;
+  const parsed = Number.parseInt(rankToken, 10);
+  if (!Number.isFinite(parsed)) return 0;
+  return parsed;
+}
+
+function parseRawCard(card: string): { rank: number; suit: string } {
+  const suit = card.slice(-1).toUpperCase();
+  const rankToken = card.slice(0, -1).toUpperCase();
+  return {
+    rank: parseRawRank(rankToken),
+    suit,
+  };
+}
+
+function straightHigh(ranks: number[]): number | null {
+  const unique = Array.from(new Set(ranks)).sort((a, b) => b - a);
+  if (unique.includes(14)) {
+    unique.push(1);
+  }
+
+  for (let i = 0; i <= unique.length - 5; i += 1) {
+    const start = unique[i];
+    let ok = true;
+    for (let step = 1; step < 5; step += 1) {
+      if (!unique.includes(start - step)) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return start === 1 ? 5 : start;
+  }
+
+  return null;
+}
+
+function evaluateFive(cards: string[]): HandScore {
+  const parsed = cards.map(parseRawCard);
+  const ranks = parsed.map((card) => card.rank).sort((a, b) => b - a);
+  const suits = parsed.map((card) => card.suit);
+
+  const flush = suits.every((suit) => suit === suits[0]);
+  const straight = straightHigh(ranks);
+
+  const rankCounts = new Map<number, number>();
+  for (const rank of ranks) {
+    rankCounts.set(rank, (rankCounts.get(rank) ?? 0) + 1);
+  }
+
+  const groups = Array.from(rankCounts.entries()).sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return b[0] - a[0];
+  });
+
+  if (flush && straight) return { category: 8, values: [straight] };
+  if (groups[0]?.[1] === 4) return { category: 7, values: [groups[0][0], groups[1][0]] };
+  if (groups[0]?.[1] === 3 && groups[1]?.[1] === 2) return { category: 6, values: [groups[0][0], groups[1][0]] };
+  if (flush) return { category: 5, values: ranks };
+  if (straight) return { category: 4, values: [straight] };
+
+  if (groups[0]?.[1] === 3) {
+    const trips = groups[0][0];
+    const kickers = groups.filter((group) => group[1] === 1).map((group) => group[0]).sort((a, b) => b - a);
+    return { category: 3, values: [trips, ...kickers] };
+  }
+
+  if (groups[0]?.[1] === 2 && groups[1]?.[1] === 2) {
+    const highPair = Math.max(groups[0][0], groups[1][0]);
+    const lowPair = Math.min(groups[0][0], groups[1][0]);
+    const kicker = groups.find((group) => group[1] === 1)?.[0] ?? 0;
+    return { category: 2, values: [highPair, lowPair, kicker] };
+  }
+
+  if (groups[0]?.[1] === 2) {
+    const pair = groups[0][0];
+    const kickers = groups.filter((group) => group[1] === 1).map((group) => group[0]).sort((a, b) => b - a);
+    return { category: 1, values: [pair, ...kickers] };
+  }
+
+  return { category: 0, values: ranks };
+}
+
+function compareScore(a: HandScore, b: HandScore): number {
+  if (a.category !== b.category) return a.category - b.category;
+  const length = Math.max(a.values.length, b.values.length);
+  for (let i = 0; i < length; i += 1) {
+    const av = a.values[i] ?? 0;
+    const bv = b.values[i] ?? 0;
+    if (av !== bv) return av - bv;
+  }
+  return 0;
+}
+
+function chooseFive(cards: string[]): string[][] {
+  const combinations: string[][] = [];
+  for (let a = 0; a < cards.length - 4; a += 1) {
+    for (let b = a + 1; b < cards.length - 3; b += 1) {
+      for (let c = b + 1; c < cards.length - 2; c += 1) {
+        for (let d = c + 1; d < cards.length - 1; d += 1) {
+          for (let e = d + 1; e < cards.length; e += 1) {
+            combinations.push([cards[a], cards[b], cards[c], cards[d], cards[e]]);
+          }
+        }
+      }
+    }
+  }
+  return combinations;
+}
+
+function bestScore(cards: string[]): HandScore {
+  const combinations = chooseFive(cards);
+  let best = evaluateFive(combinations[0]);
+  for (let i = 1; i < combinations.length; i += 1) {
+    const current = evaluateFive(combinations[i]);
+    if (compareScore(current, best) > 0) {
+      best = current;
+    }
+  }
+  return best;
+}
+
+function estimateHeroWinRateFromFlop(params: {
+  heroCards: string[];
+  boardCards: string[];
+  opponents: number;
+  iterations?: number;
+}): number | null {
+  const { heroCards, boardCards, opponents, iterations = 260 } = params;
+  if (heroCards.length < 2 || boardCards.length < 3 || opponents < 1) {
+    return null;
+  }
+
+  const flop = boardCards.slice(0, 3);
+  const known = new Set([...heroCards.slice(0, 2), ...flop]);
+  const baseDeck = createRawDeck().filter((card) => !known.has(card));
+  const need = opponents * 2 + 2;
+  if (baseDeck.length < need) {
+    return null;
+  }
+
+  let point = 0;
+  let total = 0;
+
+  for (let t = 0; t < iterations; t += 1) {
+    const selected: string[] = [];
+    const used = new Set<number>();
+
+    while (selected.length < need) {
+      const idx = Math.floor(Math.random() * baseDeck.length);
+      if (used.has(idx)) continue;
+      used.add(idx);
+      selected.push(baseDeck[idx]);
+    }
+
+    const runout = selected.slice(0, 2);
+    const board5 = [...flop, ...runout];
+    const hero = bestScore([...heroCards.slice(0, 2), ...board5]);
+
+    let heroRank = 1;
+    let tieCount = 1;
+    for (let opp = 0; opp < opponents; opp += 1) {
+      const start = 2 + opp * 2;
+      const oppHand = [selected[start], selected[start + 1]];
+      const score = bestScore([...oppHand, ...board5]);
+      const compared = compareScore(score, hero);
+      if (compared > 0) {
+        heroRank = 0;
+      } else if (compared === 0) {
+        tieCount += 1;
+      }
+    }
+
+    if (heroRank === 1) {
+      point += 1 / tieCount;
+    }
+    total += 1;
+  }
+
+  if (total === 0) return null;
+  return Math.round((point / total) * 1000) / 10;
+}
+
 function ChipStack({ amount }: { amount: number }) {
   if (amount <= 0) return null;
   const numChips = Math.min(6, Math.ceil(amount / 50));
@@ -331,6 +526,7 @@ export function PlayTable() {
   const [liveGame, setLiveGame] = useState<LiveGameSnapshot | null>(null);
   const [heroSeatId, setHeroSeatId] = useState<number | null>(null);
   const [liveBusy, setLiveBusy] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
   const [botModelId, setBotModelId] = useState<string>("local-qwen");
   const [botStyle, setBotStyle] = useState<BotStyle>("balanced");
 
@@ -371,6 +567,12 @@ export function PlayTable() {
     liveRoom?.isPrivate &&
     hasLiveBot,
   );
+  const isHeroLiveTurn = Boolean(
+    isLiveMode &&
+    heroSeatId !== null &&
+    liveGame?.gameState?.currentTurnSeatId === heroSeatId,
+  );
+  const isHeroActionTurn = userState === "playing" && (activeTurn === "hero" || isHeroLiveTurn);
 
   const syncLiveTable = async () => {
     if (!isLiveMode) return;
@@ -545,6 +747,34 @@ export function PlayTable() {
     setBotModelId("local-qwen");
     setBotStyle("balanced");
   }, [selectedSeat]);
+
+  useEffect(() => {
+    if (!isLiveMode) return;
+
+    const state = liveGame?.gameState;
+    const hero = players.find((player) => player.id === "hero");
+    if (!state || !hero || hero.holeCards.length < 2 || state.boardCards.length < 3) {
+      setHeroEquity(null);
+      return;
+    }
+
+    const activeOpponents = players.filter(
+      (player) => player.id !== "hero" && player.status !== "folded",
+    ).length;
+    const estimated = estimateHeroWinRateFromFlop({
+      heroCards: hero.holeCards,
+      boardCards: state.boardCards,
+      opponents: Math.max(activeOpponents, 1),
+      iterations: 260,
+    });
+    setHeroEquity(estimated);
+  }, [
+    isLiveMode,
+    liveGame?.gameState?.handId,
+    liveGame?.gameState?.boardCards?.slice(0, 3).join(","),
+    players.find((player) => player.id === "hero")?.holeCards.join(","),
+    players.filter((player) => player.id !== "hero" && player.status !== "folded").length,
+  ]);
 
   useEffect(() => {
     if (!isTournament) return;
@@ -897,11 +1127,11 @@ export function PlayTable() {
   };
 
   const handleHeroAction = (action: "fold" | "call" | "raise", amount?: number) => {
-    if (activeTurn !== "hero") return;
+    if (!isLiveMode && activeTurn !== "hero") return;
 
     if (isLiveMode) {
       const state = liveGame?.gameState;
-      if (!state) return;
+      if (!state || heroSeatId === null || state.currentTurnSeatId !== heroSeatId) return;
 
       const sendLiveAction = async () => {
         const payload: { action: LiveActionType; amount?: number } = {
@@ -936,6 +1166,7 @@ export function PlayTable() {
         }
 
         setLiveBusy(true);
+        setActionBusy(true);
         try {
           await apiFetch(`/game/rooms/${roomId}/act`, {
             method: "POST",
@@ -948,6 +1179,7 @@ export function PlayTable() {
           alert(error instanceof Error ? error.message : "액션 처리에 실패했습니다.");
         } finally {
           setLiveBusy(false);
+          setActionBusy(false);
         }
       };
 
@@ -1493,12 +1725,12 @@ export function PlayTable() {
       ))}
 
       <AnimatePresence mode="wait">
-        {activeTurn === "hero" && userState === "playing" && (
+        {isHeroActionTurn && (
           <motion.div 
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
-            className="absolute bottom-4 md:bottom-8 right-4 md:right-8 flex gap-2 md:gap-4 z-50"
+            className="absolute bottom-4 md:bottom-8 right-4 md:right-8 flex gap-2 md:gap-4 z-50 pointer-events-auto"
           >
             {isRaising ? (
               <motion.div 
@@ -1530,7 +1762,7 @@ export function PlayTable() {
                   />
                   <button 
                     onClick={() => handleHeroAction("raise", Number(raiseAmount))}
-                    disabled={!raiseAmount || Number(raiseAmount) <= 0 || liveBusy}
+                    disabled={!raiseAmount || Number(raiseAmount) <= 0 || actionBusy}
                     className="bg-red-500 hover:bg-red-400 disabled:opacity-50 disabled:bg-slate-700 text-white font-black px-6 py-2 rounded-xl shadow-[0_4px_0_#991B1B] active:translate-y-1 active:shadow-none transition uppercase"
                   >
                     Confirm
@@ -1541,14 +1773,14 @@ export function PlayTable() {
               <motion.div key="action-buttons" className="flex gap-2 md:gap-4" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}>
                 <button 
                   onClick={() => handleHeroAction("fold")}
-                  disabled={liveBusy}
+                  disabled={actionBusy}
                   className="bg-slate-700 hover:bg-slate-600 text-white font-bold px-6 py-4 md:px-10 md:py-5 rounded-xl md:rounded-2xl shadow-[0_6px_0_#334155] active:translate-y-2 active:shadow-none transition uppercase tracking-wider text-sm md:text-lg"
                 >
                   Fold
                 </button>
                 <button 
                   onClick={() => handleHeroAction("call")}
-                  disabled={liveBusy}
+                  disabled={actionBusy}
                   className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-black px-6 py-4 md:px-10 md:py-5 rounded-xl md:rounded-2xl shadow-[0_6px_0_#A16207] active:translate-y-2 active:shadow-none transition uppercase tracking-wider text-sm md:text-lg"
                 >
                   {isLiveMode
@@ -1559,7 +1791,7 @@ export function PlayTable() {
                 </button>
                 <button 
                   onClick={() => setIsRaising(true)}
-                  disabled={liveBusy}
+                  disabled={actionBusy}
                   className="bg-red-500 hover:bg-red-400 text-white font-black px-6 py-4 md:px-10 md:py-5 rounded-xl md:rounded-2xl shadow-[0_6px_0_#991B1B] active:translate-y-2 active:shadow-none transition uppercase tracking-wider text-sm md:text-lg"
                 >
                   Raise

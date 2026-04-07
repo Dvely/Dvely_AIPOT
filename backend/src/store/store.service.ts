@@ -279,7 +279,6 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		return (
 			normalized === 'free_user' ||
 			normalized === 'pro_user' ||
-			normalized === 'test' ||
 			normalized.startsWith('seatcheck_') ||
 			normalized.startsWith('viewer_')
 		);
