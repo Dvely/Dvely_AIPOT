@@ -275,11 +275,12 @@ export class GameService {
 			if (!seat.participant) return seat;
 
 			const isSelf = seat.participant.userId === user.sub;
+			const canRevealAtShowdown = revealAllCards && !seat.participant.folded;
 			return {
 				...seat,
 				participant: {
 					...seat.participant,
-					holeCards: revealAllCards || isSelf ? [...seat.participant.holeCards] : [],
+					holeCards: isSelf || canRevealAtShowdown ? [...seat.participant.holeCards] : [],
 				},
 			};
 		});

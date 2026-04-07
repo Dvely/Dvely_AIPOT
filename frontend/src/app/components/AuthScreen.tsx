@@ -5,6 +5,21 @@ import { LogIn, UserPlus, Users } from "lucide-react";
 import { ensureAuthSeedData, signInGuest, signInUser, signUpUser } from "../auth";
 import { useI18n } from "../i18n";
 
+const AUTH_EN = {
+  signIn: "Sign In",
+  signUp: "Sign Up",
+  idNickname: "ID (Nickname)",
+  password: "Password",
+  confirmPassword: "Confirm Password",
+  createAccount: "Create Account",
+  failedGuestSignIn: "Failed to sign in as guest.",
+  enterBothNicknameAndPassword: "Enter both nickname and password.",
+  failedSignIn: "Failed to sign in. Check your ID and password.",
+  passwordMinLength: "Password must be at least 4 characters.",
+  passwordMismatch: "Password confirmation does not match.",
+  failedCreateAccount: "Failed to create account. Please try another ID.",
+} as const;
+
 export function AuthScreen() {
   const navigate = useNavigate();
   const { t } = useI18n();
@@ -25,7 +40,7 @@ export function AuthScreen() {
   const handleGuestLogin = async () => {
     const result = await signInGuest();
     if (!result.ok) {
-      setErrorMessage(result.message || t("Failed to sign in as guest."));
+      setErrorMessage(AUTH_EN.failedGuestSignIn);
       return;
     }
 
@@ -38,14 +53,14 @@ export function AuthScreen() {
 
     const trimmedNickname = nickname.trim();
     if (!trimmedNickname || !password) {
-      setErrorMessage(t("Enter both nickname and password."));
+      setErrorMessage(AUTH_EN.enterBothNicknameAndPassword);
       return;
     }
 
     if (mode === "signin") {
       const result = await signInUser(trimmedNickname, password);
       if (!result.ok) {
-        setErrorMessage(result.message || t("Failed to sign in."));
+        setErrorMessage(AUTH_EN.failedSignIn);
         return;
       }
 
@@ -54,18 +69,18 @@ export function AuthScreen() {
     }
 
     if (password.length < 4) {
-      setErrorMessage(t("Password must be at least 4 characters."));
+      setErrorMessage(AUTH_EN.passwordMinLength);
       return;
     }
 
     if (password !== confirmPassword) {
-      setErrorMessage(t("Password confirmation does not match."));
+      setErrorMessage(AUTH_EN.passwordMismatch);
       return;
     }
 
     const signUpResult = await signUpUser(trimmedNickname, password);
     if (!signUpResult.ok) {
-      setErrorMessage(signUpResult.message || t("Failed to create account."));
+      setErrorMessage(AUTH_EN.failedCreateAccount);
       return;
     }
 
@@ -101,7 +116,7 @@ export function AuthScreen() {
                }}
                className={`rounded-lg py-2 text-sm font-black uppercase tracking-wider transition ${mode === "signin" ? "bg-cyan-600 text-white" : "text-slate-400 hover:text-white"}`}
              >
-               {t("Sign In")}
+               {AUTH_EN.signIn}
              </button>
              <button
                onClick={() => {
@@ -110,14 +125,14 @@ export function AuthScreen() {
                }}
                className={`rounded-lg py-2 text-sm font-black uppercase tracking-wider transition ${mode === "signup" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`}
              >
-               {t("Sign Up")}
+               {AUTH_EN.signUp}
              </button>
            </div>
 
            <form onSubmit={handleSubmit} className="w-full flex flex-col gap-4">
              <input 
                type="text" 
-               placeholder={t("ID (Nickname)")}
+               placeholder={AUTH_EN.idNickname}
                value={nickname}
                onChange={(event) => {
                  setNickname(event.target.value);
@@ -127,7 +142,7 @@ export function AuthScreen() {
              />
              <input 
                type="password" 
-               placeholder={t("Password")}
+               placeholder={AUTH_EN.password}
                value={password}
                onChange={(event) => {
                  setPassword(event.target.value);
@@ -139,7 +154,7 @@ export function AuthScreen() {
              {mode === "signup" && (
                <input 
                  type="password" 
-                 placeholder={t("Confirm Password")}
+                 placeholder={AUTH_EN.confirmPassword}
                  value={confirmPassword}
                  onChange={(event) => {
                    setConfirmPassword(event.target.value);
@@ -160,7 +175,7 @@ export function AuthScreen() {
                className={`w-full text-white font-black py-4 rounded-xl flex items-center justify-center gap-2 transition shadow-[0_4px_0_#1E40AF] hover:translate-y-1 hover:shadow-none active:translate-y-1 text-sm md:text-base ${mode === "signin" ? "bg-cyan-600 hover:bg-cyan-500" : "bg-indigo-600 hover:bg-indigo-500"}`}
              >
                {mode === "signin" ? <LogIn className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
-               {mode === "signin" ? t("Sign In") : t("Create Account")}
+               {mode === "signin" ? AUTH_EN.signIn : AUTH_EN.createAccount}
              </button>
            </form>
 
