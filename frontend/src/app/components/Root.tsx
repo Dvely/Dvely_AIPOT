@@ -8,6 +8,13 @@ const PHONE_MAX_LONG_EDGE = 1000;
 const MOBILE_DESKTOP_VIEWPORT_WIDTH = 1366;
 const MOBILE_DESKTOP_VIEWPORT_HEIGHT = 768;
 
+const BASE_FONT_SIZE = 16;
+const BASE_RADIUS_REM = 0.625;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function getVisualViewportSize() {
   return {
     width: window.visualViewport?.width ?? window.innerWidth,
@@ -27,10 +34,18 @@ function isPhoneViewport() {
 export function Root() {
   const [isPortrait, setIsPortrait] = useState(false);
   const [isPhoneLandscape, setIsPhoneLandscape] = useState(false);
-  const [landscapeScale, setLandscapeScale] = useState(1);
+  const [landscapeScaleX, setLandscapeScaleX] = useState(1);
+  const [landscapeScaleY, setLandscapeScaleY] = useState(1);
   const { t } = useI18n();
 
   useEffect(() => {
+    const htmlElement = document.documentElement;
+
+    const resetTuningVariables = () => {
+      htmlElement.style.removeProperty("--font-size");
+      htmlElement.style.removeProperty("--radius");
+    };
+
     const syncPhoneLayout = () => {
       const { width, height } = getVisualViewportSize();
       const isPhone = isPhoneViewport();
@@ -41,14 +56,22 @@ export function Root() {
       setIsPhoneLandscape(phoneLandscape);
 
       if (phoneLandscape) {
-        const scale = Math.min(
-          width / MOBILE_DESKTOP_VIEWPORT_WIDTH,
-          height / MOBILE_DESKTOP_VIEWPORT_HEIGHT,
-          1,
-        );
-        setLandscapeScale(scale);
+        const scaleX = width / MOBILE_DESKTOP_VIEWPORT_WIDTH;
+        const scaleY = height / MOBILE_DESKTOP_VIEWPORT_HEIGHT;
+        const axisDelta = scaleX - scaleY;
+
+        const tunedFontSize = BASE_FONT_SIZE * clamp(1 - axisDelta * 0.18, 0.92, 1.08);
+        const tunedRadius = BASE_RADIUS_REM * clamp(1 - axisDelta * 0.12, 0.9, 1.1);
+
+        setLandscapeScaleX(scaleX);
+        setLandscapeScaleY(scaleY);
+
+        htmlElement.style.setProperty("--font-size", `${tunedFontSize}px`);
+        htmlElement.style.setProperty("--radius", `${tunedRadius}rem`);
       } else {
-        setLandscapeScale(1);
+        setLandscapeScaleX(1);
+        setLandscapeScaleY(1);
+        resetTuningVariables();
       }
     };
 
@@ -62,11 +85,12 @@ export function Root() {
       window.removeEventListener("resize", syncPhoneLayout);
       window.removeEventListener("orientationchange", syncPhoneLayout);
       window.visualViewport?.removeEventListener("resize", syncPhoneLayout);
+      resetTuningVariables();
     };
   }, []);
 
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-slate-950 text-white font-sans select-none">
+    <div className="relative w-full h-screen overflow-hidden bg-slate-950 text-white font-sans select-none" style={{ height: "100dvh" }}>
       {/* Mobile Portrait Warning overlay */}
       {isPortrait ? (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-900 text-center p-6 space-y-4">
@@ -83,7 +107,7 @@ export function Root() {
               style={{
                 width: MOBILE_DESKTOP_VIEWPORT_WIDTH,
                 height: MOBILE_DESKTOP_VIEWPORT_HEIGHT,
-                transform: `scale(${landscapeScale})`,
+                transform: `scaleX(${landscapeScaleX}) scaleY(${landscapeScaleY})`,
                 transformOrigin: "center center",
                 willChange: "transform",
               }}
