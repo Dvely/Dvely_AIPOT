@@ -194,8 +194,8 @@ export function AuthScreen() {
            </button>
         </motion.div>
         
-        <footer className="absolute bottom-6 text-xs font-bold text-slate-500 tracking-wider">
-           v1.2.0 (PRD)
+          <footer className="absolute bottom-6 text-xs font-bold text-slate-500 tracking-wider">
+            AIPOT • AI Poker Trainer
         </footer>
      </div>
   );

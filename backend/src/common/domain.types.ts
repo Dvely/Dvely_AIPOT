@@ -67,6 +67,7 @@ export interface PlayerState {
   folded: boolean;
   allIn: boolean;
   connected: boolean;
+  timeoutStrikeCount?: number;
   avatarInfo: AvatarConfig | null;
   holeCards: string[];
   botConfig?: BotConfig;

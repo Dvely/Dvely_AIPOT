@@ -219,6 +219,7 @@ export function Lobby() {
   const [showMenu, setShowMenu] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showHelpSupportModal, setShowHelpSupportModal] = useState(false);
   const [profileTab, setProfileTab] = useState<"stats" | "avatar" | "settings">("stats");
   const [avatarOptions, setAvatarOptions] = useState({
     top: "shortFlat",
@@ -580,6 +581,11 @@ export function Lobby() {
             <Menu 
               className="w-8 h-8 cursor-pointer hover:text-cyan-400 transition" 
               onClick={() => setShowMenu(true)}
+            />
+            <img
+              src="/main.png"
+              alt="AIPOT logo"
+              className="h-8 w-8 rounded-full border border-cyan-300/30 object-cover"
             />
             <h1 className="text-2xl font-black italic tracking-wider">AIPOT</h1>
           </div>
@@ -1536,6 +1542,66 @@ export function Lobby() {
         )}
       </AnimatePresence>
 
+      {/* HELP & SUPPORT MODAL */}
+      <AnimatePresence>
+        {showHelpSupportModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-[#242754] w-full max-w-sm rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
+            >
+              <div className="bg-[#1A1C3E] p-4 flex justify-between items-center border-b border-white/5">
+                <h3 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
+                  <Info className="text-cyan-400 w-6 h-6"/> {t("Help & Support")}
+                </h3>
+                <button onClick={() => setShowHelpSupportModal(false)} className="text-slate-400 hover:text-white transition">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              <div className="p-6 flex flex-col gap-4">
+                <div className="bg-[#11122D] border border-white/10 rounded-xl p-4">
+                  <h4 className="text-sm font-bold text-cyan-300 uppercase tracking-wider mb-2">{t("Basic Guide")}</h4>
+                  <ul className="text-sm text-slate-300 space-y-2 font-semibold">
+                    <li>1. {t("Use Quick Play for instant matchmaking.")}</li>
+                    <li>2. {t("Use Hand Review to analyze recent hands.")}</li>
+                    <li>3. {t("Use Store to purchase chips or PRO.")}</li>
+                  </ul>
+                </div>
+
+                <div className="bg-[#11122D] border border-white/10 rounded-xl p-4">
+                  <h4 className="text-sm font-bold text-cyan-300 uppercase tracking-wider mb-2">{t("Developer Info")}</h4>
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="h-12 w-12 rounded-lg overflow-hidden border border-white/10 bg-white/5">
+                      <img
+                        src="/main2.png"
+                        alt="Dvely logo"
+                        className="h-full w-full object-cover object-center"
+                      />
+                    </div>
+                    <p className="text-sm text-slate-300 font-semibold">{t("Team")}: Dvely</p>
+                  </div>
+                  <a
+                    href="https://github.com/Dvely"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm text-cyan-300 hover:text-cyan-200 underline break-all font-bold"
+                  >
+                    {t("GitHub Profile")}: github.com/Dvely
+                  </a>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* SLIDE OUT MENU */}
       <AnimatePresence>
         {showMenu && (
@@ -1569,7 +1635,7 @@ export function Lobby() {
                  <button onClick={() => { setShowSettingsModal(true); setShowMenu(false); }} className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left">
                    <Settings className="w-5 h-5" /> {t("Settings")}
                  </button>
-                 <button className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left opacity-50 cursor-not-allowed">
+                 <button onClick={() => { setShowHelpSupportModal(true); setShowMenu(false); }} className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left">
                    <Info className="w-5 h-5" /> {t("Help & Support")}
                  </button>
                </div>

@@ -117,6 +117,7 @@ function pickRandom<T>(items: readonly T[]): T {
 const DEFAULT_ACCOUNT_BALANCE = 10000;
 const DEFAULT_GUEST_BALANCE = 1000;
 const PRIVATE_AI_BOT_NEXT_HAND_DELAY_MS = 2500;
+const MAX_TIMEOUT_STRIKES_BEFORE_AUTO_LEAVE = 3;
 
 @Injectable()
 export class StoreService implements OnModuleInit, OnModuleDestroy {
@@ -234,6 +235,13 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 				);
 			}
 			for (const room of parsed.rooms ?? []) {
+				for (const seat of room.seats) {
+					if (!seat.participant) continue;
+					seat.participant.timeoutStrikeCount = Math.max(
+						0,
+						Math.floor(seat.participant.timeoutStrikeCount ?? 0),
+					);
+				}
 				this.rooms.set(room.id, room);
 			}
 			for (const review of parsed.handReviews ?? []) {
@@ -619,6 +627,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			folded: false,
 			allIn: false,
 			connected: true,
+			timeoutStrikeCount: 0,
 			avatarInfo: params.hostAvatar,
 			holeCards: [],
 		};
@@ -704,6 +713,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			folded: false,
 			allIn: false,
 			connected: true,
+			timeoutStrikeCount: 0,
 			avatarInfo: params.avatar,
 			holeCards: [],
 		};
@@ -747,6 +757,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			folded: false,
 			allIn: false,
 			connected: true,
+			timeoutStrikeCount: 0,
 			avatarInfo: params.avatar,
 			holeCards: [],
 		};
@@ -893,6 +904,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			folded: false,
 			allIn: false,
 			connected: true,
+			timeoutStrikeCount: 0,
 			avatarInfo: this.createRandomBotAvatar(),
 			holeCards: [],
 			botConfig: params.config,
@@ -1073,11 +1085,25 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		const toCall = Math.max(state.maxBetAmount - actor.currentBetAmount, 0);
 		const autoAction = toCall > 0 ? ActionType.FOLD : ActionType.CHECK;
 
-		return this.applyPlayerAction({
+			const resolved = this.applyPlayerAction({
 			roomId,
 			actorSeatId: actor.seatId,
 			action: autoAction,
+				isAutoTimeout: true,
 		});
+
+			const timeoutSeat = resolved.seats.find((seat) => seat.seatId === actor.seatId);
+			const timeoutActor = timeoutSeat?.participant;
+			if (
+				timeoutActor &&
+				timeoutActor.roleType === ParticipantType.HUMAN &&
+				timeoutActor.userId &&
+				(timeoutActor.timeoutStrikeCount ?? 0) >= MAX_TIMEOUT_STRIKES_BEFORE_AUTO_LEAVE
+			) {
+				return this.leaveSeat(roomId, timeoutActor.seatId, timeoutActor.userId);
+			}
+
+			return resolved;
 	}
 
 	private activePlayers(room: RoomRecord): PlayerState[] {
@@ -1569,6 +1595,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		actorSeatId?: number;
 		action: ActionType;
 		amount?: number;
+		isAutoTimeout?: boolean;
 	}): RoomRecord {
 		const room = this.getRoomWithGame(params.roomId);
 		const state = room.gameState!;
@@ -1660,6 +1687,14 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 				state.minCallAmount = state.maxBetAmount;
 				state.lastAggressiveSeatId = actor.seatId;
 				state.actedSeatIds = [actor.seatId];
+			}
+		}
+
+		if (actor.roleType === ParticipantType.HUMAN) {
+			if (params.isAutoTimeout) {
+				actor.timeoutStrikeCount = (actor.timeoutStrikeCount ?? 0) + 1;
+			} else {
+				actor.timeoutStrikeCount = 0;
 			}
 		}
 
@@ -2028,6 +2063,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 					folded: false,
 					allIn: false,
 					connected: true,
+					timeoutStrikeCount: 0,
 					avatarInfo: null,
 					holeCards: [],
 					botConfig: {

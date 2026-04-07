@@ -2095,7 +2095,7 @@ export function PlayTable() {
               : hasCallFx
                 ? "CALL"
                 : hasCheckFx
-                  ? "V"
+                  ? "CHECK"
                   : null;
         const actionOverlayTone = hasAllInFx
           ? "border-violet-300 bg-violet-600/90 text-white"
