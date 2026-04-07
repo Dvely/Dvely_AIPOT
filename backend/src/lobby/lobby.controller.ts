@@ -37,6 +37,12 @@ export class LobbyController {
 		return this.lobbyService.listTournaments();
 	}
 
+	@Get('leaderboard')
+	@ApiOperation({ summary: '리더보드 조회 (닉네임/보유 머니 순위)' })
+	leaderboard() {
+		return this.lobbyService.listLeaderboard();
+	}
+
 	@Post('quick-play')
 	@ApiOperation({ summary: '퀵플레이 매칭' })
 	quickPlay(@CurrentUser() user: JwtUserPayload, @Body() dto: QuickPlayDto) {

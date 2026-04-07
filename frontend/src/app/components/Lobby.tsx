@@ -15,9 +15,17 @@ interface LobbyTableSummary {
   type: LobbyRoomType;
   status: string;
   currentPlayers: number;
+  humanPlayers: number;
   maxPlayers: number;
   isPrivate: boolean;
   code?: string;
+}
+
+interface LobbyLeaderboardEntry {
+  id: string;
+  nickname: string;
+  role: "guest" | "free" | "pro";
+  balanceAmount: number;
 }
 
 interface LobbyTableItem {
@@ -147,22 +155,6 @@ function normalizeAvatarValue(avatar: ProfileAvatar) {
   };
 }
 
-const fallbackTournamentTables: LobbyTableItem[] = [
-  {
-    id: "tournament-mock-1",
-    type: "tournament",
-    name: "Tournament Preview Table",
-    stakes: "-",
-    players: 72,
-    max: 180,
-    isPrivate: false,
-    status: "Preview",
-    prizePool: "TBD",
-    itm: "TBD",
-    buyIn: "TBD",
-  },
-];
-
 function toLobbyTable(summary: LobbyTableSummary): LobbyTableItem {
   const mappedType: LobbyTableItem["type"] =
     summary.type === "ai_bot" ? "bot" : summary.type;
@@ -205,6 +197,8 @@ export function Lobby() {
   });
   const [tables, setTables] = useState<LobbyTableItem[]>([]);
   const [tableLoading, setTableLoading] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<LobbyLeaderboardEntry[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [joinCode, setJoinCode] = useState("");
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
@@ -327,12 +321,23 @@ export function Lobby() {
     try {
       const list = await apiFetch<LobbyTableSummary[]>("/lobby/tables");
       const mapped = Array.isArray(list) ? list.map(toLobbyTable) : [];
-      const hasTournament = mapped.some((table) => table.type === "tournament");
-      setTables(hasTournament ? mapped : [...mapped, ...fallbackTournamentTables]);
+      setTables(mapped);
     } catch {
-      setTables(fallbackTournamentTables);
+      setTables([]);
     } finally {
       setTableLoading(false);
+    }
+  };
+
+  const loadLeaderboard = async () => {
+    setLeaderboardLoading(true);
+    try {
+      const ranking = await apiFetch<LobbyLeaderboardEntry[]>('/lobby/leaderboard');
+      setLeaderboard(Array.isArray(ranking) ? ranking : []);
+    } catch {
+      setLeaderboard([]);
+    } finally {
+      setLeaderboardLoading(false);
     }
   };
 
@@ -351,6 +356,12 @@ export function Lobby() {
       void loadProfile();
     }
   }, [showProfileModal, isLoggedIn]);
+
+  useEffect(() => {
+    if (activeTab === 'LEADERBOARD') {
+      void loadLeaderboard();
+    }
+  }, [activeTab]);
 
   const gameModes = [
     {
@@ -787,12 +798,48 @@ export function Lobby() {
               <div className="flex flex-col gap-3">
                  <div className="flex justify-between items-center mb-4">
                     <h2 className="text-xl font-black text-white">Top Players</h2>
-                    <span className="text-xs font-bold text-slate-400 bg-[#11122D] px-3 py-1 rounded-full">Season 12</span>
+                    <button
+                      onClick={() => {
+                        void loadLeaderboard();
+                      }}
+                      className="text-xs font-bold text-cyan-400 bg-[#11122D] px-3 py-1 rounded-full hover:text-cyan-300"
+                    >
+                      {leaderboardLoading ? 'Loading...' : 'Refresh'}
+                    </button>
                  </div>
 
-                 <div className="bg-[#11122D] border border-white/10 rounded-2xl p-6 text-slate-300">
-                   <p className="font-bold text-white mb-2">Leaderboard는 실시간 API 연동 후 노출됩니다.</p>
-                   <p className="text-sm">현재 더미 데이터는 제거되었습니다.</p>
+                 <div className="flex flex-col gap-2">
+                   {leaderboard.length === 0 ? (
+                     <div className="bg-[#11122D] border border-white/10 rounded-2xl p-6 text-slate-300">
+                       <p className="font-bold text-white">표시할 랭킹 데이터가 없습니다.</p>
+                     </div>
+                   ) : (
+                     leaderboard.slice(0, 20).map((entry, index) => (
+                       <div
+                         key={entry.id}
+                         className="bg-[#11122D] border border-white/10 rounded-xl p-4 flex items-center justify-between"
+                       >
+                         <div className="flex items-center gap-3">
+                           <div className={`w-9 h-9 rounded-full flex items-center justify-center font-black ${
+                             index === 0
+                               ? 'bg-yellow-500 text-slate-900'
+                               : index === 1
+                                 ? 'bg-slate-300 text-slate-900'
+                                 : index === 2
+                                   ? 'bg-amber-700 text-white'
+                                   : 'bg-slate-700 text-white'
+                           }`}>
+                             {index + 1}
+                           </div>
+                           <div className="flex flex-col">
+                             <span className="font-black text-white">{entry.nickname}</span>
+                             <span className="text-xs uppercase tracking-wider text-slate-400">{entry.role}</span>
+                           </div>
+                         </div>
+                         <div className="font-black text-cyan-300">${entry.balanceAmount.toLocaleString()}</div>
+                       </div>
+                     ))
+                   )}
                  </div>
               </div>
             )}
@@ -804,12 +851,31 @@ export function Lobby() {
                     <h2 className="text-xl font-black text-white flex items-center gap-2">
                       <Target className="text-cyan-400" /> Daily Missions
                     </h2>
-                    <span className="text-sm font-bold text-slate-400">API 연동 대기</span>
+                    <span className="text-sm font-bold text-slate-400">Dummy Missions</span>
                  </div>
 
-                 <div className="bg-[#11122D] border border-white/10 rounded-2xl p-6 text-slate-300">
-                   <p className="font-bold text-white mb-2">퀘스트는 서버 데이터 연동 이후 활성화됩니다.</p>
-                   <p className="text-sm">현재 더미 데이터는 제거되었습니다.</p>
+                 <div className="bg-[#11122D] border border-white/10 rounded-2xl p-4 flex items-center justify-between">
+                   <div>
+                     <p className="font-black text-white">Play 3 Hands</p>
+                     <p className="text-sm text-slate-400">0 / 3 hands</p>
+                   </div>
+                   <div className="text-cyan-300 font-bold">+ 300</div>
+                 </div>
+
+                 <div className="bg-[#11122D] border border-white/10 rounded-2xl p-4 flex items-center justify-between">
+                   <div>
+                     <p className="font-black text-white">Win 1 Hand</p>
+                     <p className="text-sm text-slate-400">0 / 1 wins</p>
+                   </div>
+                   <div className="text-cyan-300 font-bold">+ 500</div>
+                 </div>
+
+                 <div className="bg-[#11122D] border border-white/10 rounded-2xl p-4 flex items-center justify-between">
+                   <div>
+                     <p className="font-black text-white">Join Cash Table</p>
+                     <p className="text-sm text-slate-400">0 / 1 joined</p>
+                   </div>
+                   <div className="text-cyan-300 font-bold">+ 200</div>
                  </div>
               </div>
             )}
@@ -887,7 +953,7 @@ export function Lobby() {
                   }}
                   className="mt-6 w-full font-black py-4 rounded-xl text-white uppercase tracking-wider transition-all active:translate-y-1 shadow-lg bg-gradient-to-b from-yellow-400 to-orange-500 shadow-[0_4px_0_#B45309]"
                 >
-                  Create & Join
+                  Create Table
                 </button>
               </div>
             </motion.div>

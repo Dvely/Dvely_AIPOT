@@ -6,7 +6,7 @@ import { getCurrentAuth, getCurrentUserId } from "../auth";
 import { apiFetch } from "../api";
 
 type Position = number; // Used as seat index
-type Role = "BTN" | "SB" | "BB" | "UTG" | "MP" | "HJ" | "CO" | "UTG+1" | "UTG+2" | "BTN/SB";
+type Role = "BTN" | "SB" | "BB" | "UTG" | "MP" | "HJ" | "CO" | "UTG+1" | "UTG+2" | "UTG+3" | "UTG+4" | "UTG+5" | "BTN/SB";
 type GamePhase = "init" | "dealing" | "preflop" | "flop_deal" | "flop" | "turn_deal" | "turn" | "river_deal" | "river" | "showdown";
 
 interface Player {
@@ -43,6 +43,7 @@ interface LiveSeat {
 
 interface LiveRoom {
   id: string;
+  type: "ai_bot" | "cash" | "tournament";
   status: string;
   hostUserId: string;
   isPrivate: boolean;
@@ -136,7 +137,7 @@ function toUiCard(card: string) {
 }
 
 function toUiRole(label?: string): Role {
-  if (label === "BTN" || label === "SB" || label === "BB" || label === "UTG" || label === "MP" || label === "HJ" || label === "CO" || label === "UTG+1" || label === "UTG+2" || label === "BTN/SB") {
+  if (label === "BTN" || label === "SB" || label === "BB" || label === "UTG" || label === "MP" || label === "HJ" || label === "CO" || label === "UTG+1" || label === "UTG+2" || label === "UTG+3" || label === "UTG+4" || label === "UTG+5" || label === "BTN/SB") {
     return label;
   }
   return "UTG";
@@ -288,6 +289,20 @@ export function PlayTable() {
   const tableSeatCount = isLiveMode ? (liveRoom?.maxSeats ?? maxPlayers) : maxPlayers;
   const isRoomHost = Boolean(currentUserId) && liveRoom?.hostUserId === currentUserId;
   const canManageLiveRoom = !isLiveMode || (allowStartControl && isRoomHost && !!liveRoom?.isPrivate && !liveRoom?.hasBeenPublic);
+  const inferredMode = location.state?.mode === "bot"
+    ? "ai_bot"
+    : (location.state?.mode === "cash" || location.state?.mode === "cash-game")
+      ? "cash"
+      : location.state?.mode === "tournament"
+        ? "tournament"
+        : null;
+  const roomMode = liveRoom?.type ?? inferredMode;
+  const canConvertToPublic = Boolean(isLiveMode && canManageLiveRoom && liveRoom?.isPrivate && !liveRoom?.hasBeenPublic);
+  const tableModeLabel = roomMode === "ai_bot"
+    ? "AI Bot Game"
+    : roomMode === "cash"
+      ? "Cash Game"
+      : "Game Table";
 
   const syncLiveTable = async () => {
     if (!isLiveMode) return;
@@ -357,10 +372,12 @@ export function PlayTable() {
         setLog("Hand complete. Ready for next hand.");
       } else if (room.status === "IN_HAND") {
         setLog("Live hand in progress");
+      } else if (!room.isPrivate) {
+        setLog("Public room auto starts when 2+ players are seated.");
       } else if (!allowStartControl || !isRoomHost) {
         setLog("Waiting for host control...");
       } else {
-        setLog("Waiting to start...");
+        setLog("Private room ready. Seat players and start when ready.");
       }
 
       setHeroEquity(null);
@@ -667,6 +684,37 @@ export function PlayTable() {
     }
   };
 
+  const handleConvertPublic = async () => {
+    if (!isLiveMode || !liveRoom || !canConvertToPublic) return;
+
+    setLiveBusy(true);
+    try {
+      await apiFetch(`/rooms/${roomId}/convert-public`, { method: "POST" });
+      await syncLiveTable();
+      setLog("Room converted to public. Host controls are now disabled.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "공개 전환에 실패했습니다.");
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
+  const handleTakeSeat = async (seatId: number) => {
+    if (!isLiveMode) return;
+    if (heroSeatId !== null) return;
+
+    setLiveBusy(true);
+    try {
+      await apiFetch(`/rooms/${roomId}/seats/${seatId}/take`, { method: "POST" });
+      await syncLiveTable();
+      setLog("You took a seat.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "착석에 실패했습니다.");
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
   const handleSitOut = async () => {
     if (!isLiveMode) {
       setUserState("spectating");
@@ -952,6 +1000,17 @@ export function PlayTable() {
         </div>
 
         <div className="flex gap-4 pointer-events-auto">
+          {canConvertToPublic && (
+            <button
+              onClick={() => {
+                void handleConvertPublic();
+              }}
+              disabled={liveBusy}
+              className="px-4 py-2 bg-cyan-700/80 hover:bg-cyan-600/80 rounded-full text-white font-bold text-sm backdrop-blur-md border border-cyan-300/40 transition shadow-lg"
+            >
+              Make Public
+            </button>
+          )}
           {userState === "playing" && !isTournament && (
             <button 
               onClick={() => {
@@ -994,9 +1053,9 @@ export function PlayTable() {
           </>
         ) : (
           <>
-            <div className="flex items-center gap-2 text-green-400 font-black text-sm uppercase tracking-wider">
-              <Coins className="w-4 h-4"/>
-              Cash Game
+            <div className={`flex items-center gap-2 font-black text-sm uppercase tracking-wider ${roomMode === "cash" ? "text-green-400" : "text-cyan-300"}`}>
+              {roomMode === "cash" ? <Coins className="w-4 h-4"/> : roomMode === "ai_bot" ? <Target className="w-4 h-4"/> : <Info className="w-4 h-4"/>}
+              {tableModeLabel}
             </div>
             <div className="text-white font-bold text-sm mt-1">
               Blinds: <span className="text-slate-300">{liveRoom ? `${liveRoom.blindSmall} / ${liveRoom.blindBig}` : "-"}</span>
@@ -1068,7 +1127,7 @@ export function PlayTable() {
 
         {/* START GAME / DEAL HAND Button */}
         {((!isLiveMode && phase === "init" && userState === "playing") ||
-          (isLiveMode && canManageLiveRoom && liveRoom && (liveRoom.status === "WAITING_SETUP" || liveRoom.status === "READY" || liveRoom.status === "HAND_ENDED"))) && (
+          (isLiveMode && canManageLiveRoom && liveRoom && (liveRoom.status === "READY" || liveRoom.status === "HAND_ENDED"))) && (
           <button 
             onClick={() => {
               if (isLiveMode) {
@@ -1109,17 +1168,29 @@ export function PlayTable() {
       </div>
 
       {/* Render Empty Seats */}
-      {!isTournament && (!isLiveMode || canManageLiveRoom) && Array.from({ length: tableSeatCount }).map((_, i) => {
+      {!isTournament && (!isLiveMode || canManageLiveRoom || heroSeatId === null) && Array.from({ length: tableSeatCount }).map((_, i) => {
         if (players.find(p => p.pos === i)) return null;
         if (phase !== "init" && phase !== "showdown") return null; // Only allow adding between hands
+        const canSitHere = isLiveMode && heroSeatId === null;
+        const canAddBotHere = !isLiveMode || canManageLiveRoom;
+        if (!canSitHere && !canAddBotHere) return null;
+
         return (
           <div key={`empty-${i}`} className="absolute flex flex-col items-center z-20" style={getPlayerPosStyle(i, tableSeatCount)}>
              <button 
-               onClick={() => setSelectedSeat(i)}
+               onClick={() => {
+                 if (canSitHere) {
+                   void handleTakeSeat(i + 1);
+                   return;
+                 }
+                 if (canAddBotHere) {
+                   setSelectedSeat(i);
+                 }
+               }}
                className="w-20 h-20 md:w-24 md:h-24 rounded-full border-2 border-dashed border-white/20 bg-black/20 hover:bg-white/10 hover:border-white/50 flex flex-col items-center justify-center transition group shadow-inner"
              >
                <Plus className="w-8 h-8 text-white/30 group-hover:text-white/70 mb-1 transition-colors" />
-               <span className="text-[10px] text-white/40 group-hover:text-white/80 font-bold uppercase tracking-wider transition-colors">Add Bot</span>
+               <span className="text-[10px] text-white/40 group-hover:text-white/80 font-bold uppercase tracking-wider transition-colors">{canSitHere ? "Sit Here" : "Add Bot"}</span>
              </button>
           </div>
         );

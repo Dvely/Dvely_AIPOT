@@ -25,6 +25,7 @@ import {
 	GameState,
 	HandAction,
 	HandReviewRecord,
+	LeaderboardEntry,
 	PlayerState,
 	RoomRecord,
 	TableSummary,
@@ -65,10 +66,25 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 	async onModuleInit(): Promise<void> {
 		await this.hydrateFromSnapshot();
 		this.timeoutTicker = setInterval(() => {
+			let dirty = false;
 			for (const room of this.rooms.values()) {
+				if (this.shouldDeleteIdleAiRoom(room)) {
+					this.rooms.delete(room.id);
+					dirty = true;
+					continue;
+				}
+
+				if (this.autoAdvancePublicRoom(room)) {
+					dirty = true;
+				}
+
 				if (room.status === RoomStatus.IN_HAND && room.gameState) {
 					this.autoResolveTimeout(room.id);
 				}
+			}
+
+			if (dirty) {
+				this.markDirty();
 			}
 		}, 1000);
 	}
@@ -244,8 +260,63 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		return room.seats.filter((seat) => seat.participant).length;
 	}
 
+	private countHumanParticipants(room: RoomRecord): number {
+		return room.seats.filter(
+			(seat) => seat.participant?.roleType === ParticipantType.HUMAN,
+		).length;
+	}
+
+	private shouldDeleteIdleAiRoom(room: RoomRecord): boolean {
+		return (
+			room.type === RoomType.AI_BOT &&
+			!room.isPrivate &&
+			this.countHumanParticipants(room) === 0
+		);
+	}
+
+	private autoAdvancePublicRoom(room: RoomRecord): boolean {
+		if (room.isPrivate || room.status === RoomStatus.CLOSED) {
+			return false;
+		}
+
+		let changed = false;
+
+		if (room.status === RoomStatus.HAND_ENDED) {
+			room.gameState = null;
+			room.seats.forEach((seat) => {
+				if (!seat.participant) return;
+				seat.participant.currentBetAmount = 0;
+				seat.participant.holeCards = [];
+				seat.participant.folded = false;
+				seat.participant.allIn = false;
+			});
+			room.status = RoomStatus.WAITING_SETUP;
+			this.setReadyState(room);
+			changed = true;
+		}
+
+		if (
+			(room.status === RoomStatus.READY || room.status === RoomStatus.WAITING_SETUP) &&
+			!room.gameState
+		) {
+			const seated = room.seats.filter((seat) => seat.participant);
+			if (seated.length >= 2) {
+				room.status = RoomStatus.DEALING;
+				room.gameState = this.createInitialGameState(
+					room,
+					seated.map((seat) => seat.seatId),
+				);
+				room.status = RoomStatus.IN_HAND;
+				changed = true;
+			}
+		}
+
+		return changed;
+	}
+
 	private roomToSummary(room: RoomRecord): TableSummary {
 		const currentPlayers = this.countParticipants(room);
+		const humanPlayers = this.countHumanParticipants(room);
 		return {
 			id: room.id,
 			code: room.code,
@@ -253,6 +324,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			type: room.type,
 			status: room.status,
 			currentPlayers,
+			humanPlayers,
 			maxPlayers: room.maxSeats,
 			isPrivate: room.isPrivate,
 			canJoin:
@@ -365,10 +437,21 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 	}
 
 	listRoomSummaries(type?: RoomType): TableSummary[] {
-		this.seedLobbyRooms();
 		return Array.from(this.rooms.values())
+			.filter((room) => room.hostUserId !== 'system-host')
 			.filter((room) => (type ? room.type === type : true))
 			.map((room) => this.roomToSummary(room));
+	}
+
+	listLeaderboard(): LeaderboardEntry[] {
+		return Array.from(this.users.values())
+			.map((user) => ({
+				id: user.id,
+				nickname: user.nickname,
+				role: user.role,
+				balanceAmount: user.balanceAmount,
+			}))
+			.sort((a, b) => b.balanceAmount - a.balanceAmount || a.nickname.localeCompare(b.nickname));
 	}
 
 	getRoomDetail(roomId: string): RoomRecord {
@@ -483,7 +566,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
 		const participant = seat.participant;
 		if (participant.roleType === ParticipantType.HUMAN) {
-			if (participant.userId !== actorUserId && room.hostUserId !== actorUserId) {
+			const selfLeave = participant.userId === actorUserId;
+			const privateHostControl = room.isPrivate && room.hostUserId === actorUserId;
+			if (!selfLeave && !privateHostControl) {
 				throw new BadRequestException('본인 좌석 또는 방장만 좌석 이탈이 가능합니다.');
 			}
 		} else {
@@ -586,6 +671,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
 	closeRoom(roomId: string, actorUserId: string): RoomRecord {
 		const room = this.ensureRoom(roomId);
+		if (!room.isPrivate) {
+			throw new BadRequestException('공개 룸은 수동 종료할 수 없습니다.');
+		}
 		if (room.hostUserId !== actorUserId) {
 			throw new BadRequestException('방장만 룸을 종료할 수 있습니다.');
 		}
@@ -597,6 +685,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
 	startGame(roomId: string, actorUserId: string): RoomRecord {
 		const room = this.ensureRoom(roomId);
+		if (!room.isPrivate) {
+			throw new BadRequestException('공개 룸은 자동으로 핸드를 시작합니다.');
+		}
 		this.assertHostControlAllowed(room, actorUserId);
 
 		if (
@@ -1059,12 +1150,26 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
 	private labelsForCount(count: number): PositionLabel[] {
 		if (count === 2) return ['BTN/SB', 'BB'];
-		if (count === 3) return ['BTN', 'SB', 'BB'];
-		if (count === 4) return ['BTN', 'SB', 'BB', 'UTG'];
-		if (count === 5) return ['BTN', 'SB', 'BB', 'UTG', 'CO'];
-		if (count === 6) return ['BTN', 'SB', 'BB', 'UTG', 'HJ', 'CO'];
-		if (count === 7) return ['BTN', 'SB', 'BB', 'UTG', 'MP', 'HJ', 'CO'];
-		return ['BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'MP', 'HJ', 'CO'];
+
+		const labels: PositionLabel[] = ['BTN', 'SB', 'BB'];
+		for (let idx = 3; idx < count; idx += 1) {
+			const utgOffset = idx - 3;
+			if (utgOffset === 0) {
+				labels.push('UTG');
+			} else if (utgOffset === 1) {
+				labels.push('UTG+1');
+			} else if (utgOffset === 2) {
+				labels.push('UTG+2');
+			} else if (utgOffset === 3) {
+				labels.push('UTG+3');
+			} else if (utgOffset === 4) {
+				labels.push('UTG+4');
+			} else {
+				labels.push('UTG+5');
+			}
+		}
+
+		return labels;
 	}
 
 	private assignPositions(
@@ -1078,7 +1183,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
 		const map: Record<number, PositionLabel> = {};
 		ordered.forEach((seatId, idx) => {
-			map[seatId] = labels[idx] ?? 'CO';
+			map[seatId] = labels[idx] ?? 'UTG';
 		});
 		return map;
 	}

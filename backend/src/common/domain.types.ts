@@ -130,9 +130,17 @@ export interface TableSummary {
   type: RoomType;
   status: RoomStatus;
   currentPlayers: number;
+  humanPlayers: number;
   maxPlayers: number;
   isPrivate: boolean;
   canJoin: boolean;
+}
+
+export interface LeaderboardEntry {
+  id: string;
+  nickname: string;
+  role: UserRole;
+  balanceAmount: number;
 }
 
 export interface HandReviewRecord {

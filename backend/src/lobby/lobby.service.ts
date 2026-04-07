@@ -13,11 +13,16 @@ export class LobbyService {
 	) {}
 
 	listTables(roomType?: RoomType) {
-		return this.store.listRoomSummaries(roomType);
+		const summaries = this.store.listRoomSummaries(roomType);
+		return summaries.filter((summary) => summary.humanPlayers > 0);
 	}
 
 	listTournaments() {
 		return this.store.listRoomSummaries(RoomType.TOURNAMENT);
+	}
+
+	listLeaderboard() {
+		return this.store.listLeaderboard();
 	}
 
 	quickPlay(user: JwtUserPayload, dto: QuickPlayDto) {
@@ -29,6 +34,7 @@ export class LobbyService {
 
 		const candidate = this.store
 			.listRoomSummaries(targetType)
+			.filter((summary) => summary.humanPlayers > 0)
 			.find((summary) => summary.canJoin && !summary.isPrivate);
 
 		if (!candidate) {
