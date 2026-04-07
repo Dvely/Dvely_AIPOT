@@ -323,10 +323,12 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			name: room.name,
 			type: room.type,
 			status: room.status,
+			hostUserId: room.hostUserId,
 			currentPlayers,
 			humanPlayers,
 			maxPlayers: room.maxSeats,
 			isPrivate: room.isPrivate,
+			hasBeenPublic: room.hasBeenPublic,
 			canJoin:
 				room.status !== RoomStatus.CLOSED &&
 				currentPlayers < room.maxSeats &&
@@ -451,6 +453,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 				role: user.role,
 				balanceAmount: user.balanceAmount,
 			}))
+			.filter((user) => user.role !== UserRole.GUEST)
+			.filter((user) => !['free_user', 'pro_user'].includes(user.nickname))
 			.sort((a, b) => b.balanceAmount - a.balanceAmount || a.nickname.localeCompare(b.nickname));
 	}
 
@@ -829,28 +833,239 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		}
 	}
 
-	private determineWinner(room: RoomRecord): PlayerState {
+	private parseRank(rankToken: string): number {
+		if (rankToken === 'A') return 14;
+		if (rankToken === 'K') return 13;
+		if (rankToken === 'Q') return 12;
+		if (rankToken === 'J') return 11;
+		if (rankToken === 'T') return 10;
+		const value = Number.parseInt(rankToken, 10);
+		if (!Number.isFinite(value) || value < 2 || value > 9) {
+			throw new BadRequestException(`유효하지 않은 카드 랭크입니다: ${rankToken}`);
+		}
+		return value;
+	}
+
+	private parseCard(card: string): { rank: number; suit: string } {
+		if (card.length < 2) {
+			throw new BadRequestException(`유효하지 않은 카드입니다: ${card}`);
+		}
+		const suit = card.slice(-1);
+		const rankToken = card.slice(0, -1);
+		return {
+			rank: this.parseRank(rankToken),
+			suit,
+		};
+	}
+
+	private straightHigh(ranks: number[]): number | null {
+		const unique = Array.from(new Set(ranks)).sort((a, b) => b - a);
+		if (unique.includes(14)) {
+			unique.push(1);
+		}
+		for (let i = 0; i <= unique.length - 5; i += 1) {
+			const start = unique[i];
+			let ok = true;
+			for (let step = 1; step < 5; step += 1) {
+				if (!unique.includes(start - step)) {
+					ok = false;
+					break;
+				}
+			}
+			if (ok) {
+				return start === 1 ? 5 : start;
+			}
+		}
+		return null;
+	}
+
+	private evaluateFiveCards(cards: string[]): { category: number; values: number[] } {
+		const parsed = cards.map((card) => this.parseCard(card));
+		const ranks = parsed.map((card) => card.rank).sort((a, b) => b - a);
+		const suits = parsed.map((card) => card.suit);
+		const flush = suits.every((suit) => suit === suits[0]);
+		const straight = this.straightHigh(ranks);
+
+		const rankCounts = new Map<number, number>();
+		for (const rank of ranks) {
+			rankCounts.set(rank, (rankCounts.get(rank) ?? 0) + 1);
+		}
+
+		const groups = Array.from(rankCounts.entries()).sort((a, b) => {
+			if (b[1] !== a[1]) return b[1] - a[1];
+			return b[0] - a[0];
+		});
+
+		if (flush && straight) {
+			return { category: 8, values: [straight] };
+		}
+
+		if (groups[0]?.[1] === 4) {
+			const four = groups[0][0];
+			const kicker = groups[1][0];
+			return { category: 7, values: [four, kicker] };
+		}
+
+		if (groups[0]?.[1] === 3 && groups[1]?.[1] === 2) {
+			return { category: 6, values: [groups[0][0], groups[1][0]] };
+		}
+
+		if (flush) {
+			return { category: 5, values: [...ranks] };
+		}
+
+		if (straight) {
+			return { category: 4, values: [straight] };
+		}
+
+		if (groups[0]?.[1] === 3) {
+			const trips = groups[0][0];
+			const kickers = groups
+				.filter((group) => group[1] === 1)
+				.map((group) => group[0])
+				.sort((a, b) => b - a);
+			return { category: 3, values: [trips, ...kickers] };
+		}
+
+		if (groups[0]?.[1] === 2 && groups[1]?.[1] === 2) {
+			const highPair = Math.max(groups[0][0], groups[1][0]);
+			const lowPair = Math.min(groups[0][0], groups[1][0]);
+			const kicker = groups.find((group) => group[1] === 1)?.[0] ?? 0;
+			return { category: 2, values: [highPair, lowPair, kicker] };
+		}
+
+		if (groups[0]?.[1] === 2) {
+			const pair = groups[0][0];
+			const kickers = groups
+				.filter((group) => group[1] === 1)
+				.map((group) => group[0])
+				.sort((a, b) => b - a);
+			return { category: 1, values: [pair, ...kickers] };
+		}
+
+		return { category: 0, values: [...ranks] };
+	}
+
+	private compareEvaluatedHand(
+		a: { category: number; values: number[] },
+		b: { category: number; values: number[] },
+	): number {
+		if (a.category !== b.category) {
+			return a.category - b.category;
+		}
+
+		const length = Math.max(a.values.length, b.values.length);
+		for (let idx = 0; idx < length; idx += 1) {
+			const av = a.values[idx] ?? 0;
+			const bv = b.values[idx] ?? 0;
+			if (av !== bv) {
+				return av - bv;
+			}
+		}
+
+		return 0;
+	}
+
+	private chooseFiveFrom(cards: string[]): string[][] {
+		const combinations: string[][] = [];
+		for (let a = 0; a < cards.length - 4; a += 1) {
+			for (let b = a + 1; b < cards.length - 3; b += 1) {
+				for (let c = b + 1; c < cards.length - 2; c += 1) {
+					for (let d = c + 1; d < cards.length - 1; d += 1) {
+						for (let e = d + 1; e < cards.length; e += 1) {
+							combinations.push([cards[a], cards[b], cards[c], cards[d], cards[e]]);
+						}
+					}
+				}
+			}
+		}
+		return combinations;
+	}
+
+	private evaluateBestHand(cards: string[]): { category: number; values: number[] } {
+		const combinations = this.chooseFiveFrom(cards);
+		let best = this.evaluateFiveCards(combinations[0]);
+
+		for (let idx = 1; idx < combinations.length; idx += 1) {
+			const current = this.evaluateFiveCards(combinations[idx]);
+			if (this.compareEvaluatedHand(current, best) > 0) {
+				best = current;
+			}
+		}
+
+		return best;
+	}
+
+	private determineShowdownWinners(room: RoomRecord): PlayerState[] {
+		const state = room.gameState;
+		if (!state) {
+			throw new BadRequestException('진행 중인 핸드가 없습니다.');
+		}
+
 		const candidates = this.activePlayers(room);
 		if (candidates.length === 0) {
 			throw new BadRequestException('승자를 결정할 플레이어가 없습니다.');
 		}
 
-		return candidates[Math.floor(Math.random() * candidates.length)];
+		if (candidates.length === 1) {
+			return [candidates[0]];
+		}
+
+		let bestScore: { category: number; values: number[] } | null = null;
+		let winners: PlayerState[] = [];
+
+		for (const candidate of candidates) {
+			const allCards = [...candidate.holeCards, ...state.boardCards];
+			if (allCards.length < 5) {
+				continue;
+			}
+
+			const score = this.evaluateBestHand(allCards);
+			if (!bestScore) {
+				bestScore = score;
+				winners = [candidate];
+				continue;
+			}
+
+			const compared = this.compareEvaluatedHand(score, bestScore);
+			if (compared > 0) {
+				bestScore = score;
+				winners = [candidate];
+			} else if (compared === 0) {
+				winners.push(candidate);
+			}
+		}
+
+		if (winners.length === 0) {
+			return [candidates[0]];
+		}
+
+		return winners;
 	}
 
-	private completeHand(room: RoomRecord, winner: PlayerState) {
+	private completeHand(room: RoomRecord, winners: PlayerState[]) {
 		const state = room.gameState;
 		if (!state) return;
-
-		const pot = state.potAmount + this.sumPlayerBets(room);
-		winner.stackAmount += pot;
-
-		const winnerUser = winner.userId ? this.findUserById(winner.userId) : null;
-		if (winnerUser) {
-			winnerUser.stats.winHands += 1;
-			winnerUser.stats.biggestPot = Math.max(winnerUser.stats.biggestPot, pot);
-			winnerUser.stats.totalProfit += pot;
+		if (winners.length === 0) {
+			throw new BadRequestException('승자 정보가 없습니다.');
 		}
+
+		const pot = state.potAmount;
+		const orderedWinners = [...winners].sort((a, b) => a.seatId - b.seatId);
+		const share = Math.floor(pot / orderedWinners.length);
+		const remain = pot % orderedWinners.length;
+
+		orderedWinners.forEach((winner, idx) => {
+			const gained = share + (idx < remain ? 1 : 0);
+			winner.stackAmount += gained;
+
+			const winnerUser = winner.userId ? this.findUserById(winner.userId) : null;
+			if (winnerUser) {
+				winnerUser.stats.winHands += 1;
+				winnerUser.stats.biggestPot = Math.max(winnerUser.stats.biggestPot, gained);
+				winnerUser.stats.totalProfit += gained;
+			}
+		});
 
 		room.seats.forEach((seat) => {
 			const participant = seat.participant;
@@ -858,6 +1073,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			const user = this.findUserById(participant.userId);
 			if (!user) return;
 			user.stats.playedHands += 1;
+			user.balanceAmount = participant.stackAmount;
 		});
 
 		const review: HandReviewRecord = {
@@ -868,7 +1084,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 				.filter((item): item is string => !!item),
 			boardCards: [...state.boardCards],
 			actions: [...state.actions],
-			winnerPlayerId: winner.playerId,
+			winnerPlayerId: orderedWinners[0].playerId,
 			resultPot: pot,
 			createdAt: new Date().toISOString(),
 		};
@@ -926,8 +1142,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		} else if (state.street === HandStreet.RIVER) {
 			room.status = RoomStatus.SHOWDOWN;
 			state.street = HandStreet.SHOWDOWN;
-			const winner = this.determineWinner(room);
-			this.completeHand(room, winner);
+			const winners = this.determineShowdownWinners(room);
+			this.completeHand(room, winners);
 			return;
 		}
 
@@ -1058,7 +1274,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
 		const remaining = this.activePlayers(room);
 		if (remaining.length === 1) {
-			this.completeHand(room, remaining[0]);
+			this.completeHand(room, [remaining[0]]);
 			return room;
 		}
 

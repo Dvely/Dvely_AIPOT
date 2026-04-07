@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { JwtUserPayload } from '../common/domain.types';
+import { RoomStatus } from '../common/enums/room.enum';
 import { StoreService } from '../store/store.service';
 import { ActDto } from './dto/act.dto';
 
@@ -7,12 +8,28 @@ import { ActDto } from './dto/act.dto';
 export class GameService {
 	constructor(private readonly store: StoreService) {}
 
-	getState(roomId: string) {
+	getState(user: JwtUserPayload, roomId: string) {
 		const room = this.store.autoResolveTimeout(roomId);
+		const revealAllCards =
+			room.status === RoomStatus.SHOWDOWN || room.status === RoomStatus.HAND_ENDED;
+
+		const seats = room.seats.map((seat) => {
+			if (!seat.participant) return seat;
+
+			const isSelf = seat.participant.userId === user.sub;
+			return {
+				...seat,
+				participant: {
+					...seat.participant,
+					holeCards: revealAllCards || isSelf ? [...seat.participant.holeCards] : [],
+				},
+			};
+		});
+
 		return {
 			roomId: room.id,
 			roomStatus: room.status,
-			seats: room.seats,
+			seats,
 			gameState: room.gameState,
 			blinds: {
 				small: room.blindSmall,

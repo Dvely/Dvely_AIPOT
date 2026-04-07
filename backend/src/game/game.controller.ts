@@ -19,8 +19,8 @@ export class GameController {
 
 	@Get('rooms/:roomId/state')
 	@ApiOperation({ summary: '게임 상태 구독용 스냅샷 조회' })
-	getState(@Param('roomId') roomId: string) {
-		return this.gameService.getState(roomId);
+	getState(@CurrentUser() user: JwtUserPayload, @Param('roomId') roomId: string) {
+		return this.gameService.getState(user, roomId);
 	}
 
 	@Post('rooms/:roomId/act')

@@ -12,9 +12,20 @@ export class LobbyService {
 		private readonly usersService: UsersService,
 	) {}
 
-	listTables(roomType?: RoomType) {
+	listTables(user: JwtUserPayload, roomType?: RoomType) {
 		const summaries = this.store.listRoomSummaries(roomType);
-		return summaries.filter((summary) => summary.humanPlayers > 0);
+		return summaries.filter((summary) => {
+			if (summary.type === RoomType.TOURNAMENT) {
+				return true;
+			}
+
+			return (
+				summary.humanPlayers > 0 &&
+				summary.hasBeenPublic &&
+				!summary.isPrivate &&
+				summary.hostUserId === user.sub
+			);
+		});
 	}
 
 	listTournaments() {

@@ -119,7 +119,7 @@ interface LiveGameState {
 
 interface LiveGameSnapshot {
   roomStatus: string;
-  gameState: LiveGameState;
+  gameState: LiveGameState | null;
 }
 
 const SUIT_MAP: Record<string, string> = {
@@ -152,6 +152,38 @@ function toUiPhase(roomStatus: string, street?: string): GamePhase {
   if (street === "FLOP") return "flop";
   if (street === "PREFLOP") return "preflop";
   return "init";
+}
+
+function sameStringArray(a: string[], b: string[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function samePlayers(prev: Player[], next: Player[]) {
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i += 1) {
+    const a = prev[i];
+    const b = next[i];
+    if (
+      a.id !== b.id ||
+      a.name !== b.name ||
+      a.pos !== b.pos ||
+      a.role !== b.role ||
+      a.avatarSeed !== b.avatarSeed ||
+      a.chips !== b.chips ||
+      a.bet !== b.bet ||
+      a.status !== b.status ||
+      a.cardsDealt !== b.cardsDealt ||
+      a.seatId !== b.seatId ||
+      !sameStringArray(a.holeCards, b.holeCards)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 const getInitialPlayers = (count: number, max: number): Player[] => {
@@ -246,7 +278,6 @@ export function PlayTable() {
   const currentUserId = getCurrentUserId();
   
   const isTournament = location.state?.mode === "tournament";
-  const allowStartControl = Boolean(location.state?.allowStartControl);
   const queryRoomId = new URLSearchParams(location.search).get("roomId")?.trim() ?? "";
   const stateRoomId = typeof location.state?.roomId === "string" ? (location.state.roomId as string).trim() : "";
   const roomId = queryRoomId || stateRoomId;
@@ -256,7 +287,9 @@ export function PlayTable() {
   const maxPlayers = location.state?.table?.max || numPlayers;
   
   const [phase, setPhase] = useState<GamePhase>("init");
-  const [players, setPlayers] = useState<Player[]>(() => getInitialPlayers(numPlayers, maxPlayers));
+  const [players, setPlayers] = useState<Player[]>(() =>
+    isLiveMode ? [] : getInitialPlayers(numPlayers, maxPlayers),
+  );
   const [gameStarted, setGameStarted] = useState(false);
   const [activeTurn, setActiveTurn] = useState<string | null>(null);
   const [selectedSeat, setSelectedSeat] = useState<number | null>(null);
@@ -288,7 +321,8 @@ export function PlayTable() {
   const [nextStageName, setNextStageName] = useState("");
   const tableSeatCount = isLiveMode ? (liveRoom?.maxSeats ?? maxPlayers) : maxPlayers;
   const isRoomHost = Boolean(currentUserId) && liveRoom?.hostUserId === currentUserId;
-  const canManageLiveRoom = !isLiveMode || (allowStartControl && isRoomHost && !!liveRoom?.isPrivate && !liveRoom?.hasBeenPublic);
+  const canManageLiveRoom = !isLiveMode || (isRoomHost && !!liveRoom?.isPrivate && !liveRoom?.hasBeenPublic);
+  const liveSeatedPlayers = liveRoom?.seats.filter((seat) => seat.participant).length ?? 0;
   const inferredMode = location.state?.mode === "bot"
     ? "ai_bot"
     : (location.state?.mode === "cash" || location.state?.mode === "cash-game")
@@ -309,7 +343,44 @@ export function PlayTable() {
 
     try {
       const room = await apiFetch<LiveRoom>(`/rooms/${roomId}`);
-      setLiveRoom(room);
+      setLiveRoom((prev) => {
+        const prevSeats = prev?.seats ?? [];
+        const nextSeats = room.seats;
+        if (
+          prev &&
+          prev.id === room.id &&
+          prev.type === room.type &&
+          prev.status === room.status &&
+          prev.hostUserId === room.hostUserId &&
+          prev.isPrivate === room.isPrivate &&
+          prev.hasBeenPublic === room.hasBeenPublic &&
+          prev.maxSeats === room.maxSeats &&
+          prev.blindSmall === room.blindSmall &&
+          prev.blindBig === room.blindBig &&
+          prevSeats.length === nextSeats.length &&
+          prevSeats.every((seat, idx) => {
+            const nextSeat = nextSeats[idx];
+            if (seat.seatId !== nextSeat.seatId) return false;
+            const p = seat.participant;
+            const n = nextSeat.participant;
+            if (!p && !n) return true;
+            if (!p || !n) return false;
+            return (
+              p.seatId === n.seatId &&
+              p.playerId === n.playerId &&
+              p.userId === n.userId &&
+              p.displayName === n.displayName &&
+              p.stackAmount === n.stackAmount &&
+              p.currentBetAmount === n.currentBetAmount &&
+              p.folded === n.folded &&
+              sameStringArray(p.holeCards, n.holeCards)
+            );
+          })
+        ) {
+          return prev;
+        }
+        return room;
+      });
 
       let game: LiveGameSnapshot | null = null;
       try {
@@ -317,7 +388,33 @@ export function PlayTable() {
       } catch {
         game = null;
       }
-      setLiveGame(game);
+      setLiveGame((prev) => {
+        if (!prev && !game) return prev;
+        if (!prev || !game) return game;
+
+        const prevState = prev.gameState;
+        const nextState = game.gameState;
+		if (!prevState && !nextState) {
+			return prev;
+		}
+		if (!prevState || !nextState) {
+			return game;
+		}
+        if (
+          prev.roomStatus === game.roomStatus &&
+          prevState.handId === nextState.handId &&
+          prevState.street === nextState.street &&
+          prevState.currentTurnSeatId === nextState.currentTurnSeatId &&
+          prevState.minCallAmount === nextState.minCallAmount &&
+          prevState.minRaiseAmount === nextState.minRaiseAmount &&
+          prevState.maxBetAmount === nextState.maxBetAmount &&
+          prevState.potAmount === nextState.potAmount &&
+          sameStringArray(prevState.boardCards, nextState.boardCards)
+        ) {
+          return prev;
+        }
+        return game;
+      });
 
       const seatMap = new Map<number, string>();
       let mySeat: number | null = null;
@@ -348,24 +445,32 @@ export function PlayTable() {
           };
         });
 
-      setPlayers(mappedPlayers);
+      setPlayers((prev) => (samePlayers(prev, mappedPlayers) ? prev : mappedPlayers));
       setHeroSeatId(mySeat);
-      setUserState(mySeat === null ? "spectating" : "playing");
+      setUserState((prev) => {
+        const next = mySeat === null ? "spectating" : "playing";
+        return prev === next ? prev : next;
+      });
 
       if (game?.gameState) {
-        setPhase(toUiPhase(room.status, game.gameState.street));
-        setCommunityCards(game.gameState.boardCards.map(toUiCard));
-        setPot(game.gameState.potAmount);
-        setActiveTurn(
+        const nextPhase = toUiPhase(room.status, game.gameState.street);
+        const nextCommunityCards = game.gameState.boardCards.map(toUiCard);
+        const nextTurn =
           game.gameState.currentTurnSeatId
             ? seatMap.get(game.gameState.currentTurnSeatId) ?? null
-            : null,
+            : null;
+
+        setPhase((prev) => (prev === nextPhase ? prev : nextPhase));
+        setCommunityCards((prev) =>
+          sameStringArray(prev, nextCommunityCards) ? prev : nextCommunityCards,
         );
+        setPot((prev) => (prev === game.gameState.potAmount ? prev : game.gameState.potAmount));
+        setActiveTurn((prev) => (prev === nextTurn ? prev : nextTurn));
       } else {
-        setPhase("init");
-        setCommunityCards([]);
-        setPot(0);
-        setActiveTurn(null);
+        setPhase((prev) => (prev === "init" ? prev : "init"));
+        setCommunityCards((prev) => (prev.length === 0 ? prev : []));
+        setPot((prev) => (prev === 0 ? prev : 0));
+        setActiveTurn((prev) => (prev === null ? prev : null));
       }
 
       if (room.status === "HAND_ENDED") {
@@ -374,16 +479,12 @@ export function PlayTable() {
         setLog("Live hand in progress");
       } else if (!room.isPrivate) {
         setLog("Public room auto starts when 2+ players are seated.");
-      } else if (!allowStartControl || !isRoomHost) {
+      } else if (!isRoomHost) {
         setLog("Waiting for host control...");
       } else {
         setLog("Private room ready. Seat players and start when ready.");
       }
 
-      setHeroEquity(null);
-      setWinner(null);
-      setWinningCards([]);
-      setWinningHandRank(null);
       setGameStarted(room.status !== "WAITING_SETUP");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load room state.";
@@ -402,7 +503,7 @@ export function PlayTable() {
     }, 2500);
 
     return () => clearInterval(timer);
-  }, [isLiveMode, roomId, currentUserId, liveBusy, allowStartControl, isRoomHost]);
+  }, [isLiveMode, roomId, currentUserId, liveBusy]);
 
   useEffect(() => {
     if (selectedSeat === null) return;
@@ -694,22 +795,6 @@ export function PlayTable() {
       setLog("Room converted to public. Host controls are now disabled.");
     } catch (error) {
       alert(error instanceof Error ? error.message : "공개 전환에 실패했습니다.");
-    } finally {
-      setLiveBusy(false);
-    }
-  };
-
-  const handleTakeSeat = async (seatId: number) => {
-    if (!isLiveMode) return;
-    if (heroSeatId !== null) return;
-
-    setLiveBusy(true);
-    try {
-      await apiFetch(`/rooms/${roomId}/seats/${seatId}/take`, { method: "POST" });
-      await syncLiveTable();
-      setLog("You took a seat.");
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "착석에 실패했습니다.");
     } finally {
       setLiveBusy(false);
     }
@@ -1127,7 +1212,7 @@ export function PlayTable() {
 
         {/* START GAME / DEAL HAND Button */}
         {((!isLiveMode && phase === "init" && userState === "playing") ||
-          (isLiveMode && canManageLiveRoom && liveRoom && (liveRoom.status === "READY" || liveRoom.status === "HAND_ENDED"))) && (
+          (isLiveMode && canManageLiveRoom && liveRoom && (liveRoom.status === "WAITING_SETUP" || liveRoom.status === "READY" || liveRoom.status === "HAND_ENDED"))) && (
           <button 
             onClick={() => {
               if (isLiveMode) {
@@ -1137,13 +1222,15 @@ export function PlayTable() {
               if (!gameStarted) setGameStarted(true);
               setPhase("dealing");
             }}
-            disabled={liveBusy}
+            disabled={liveBusy || (isLiveMode && liveRoom?.status === "WAITING_SETUP" && liveSeatedPlayers < 2)}
             className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-3 md:px-8 md:py-4 bg-gradient-to-r from-green-500 to-emerald-400 text-white font-black text-xl md:text-2xl rounded-full shadow-[0_0_20px_rgba(34,197,94,0.5)] hover:scale-105 transition-transform z-50 uppercase tracking-widest border border-white/20"
           >
             {isLiveMode
               ? liveRoom?.status === "HAND_ENDED"
                 ? "Next Hand"
-                : "Start Game"
+                : liveRoom?.status === "WAITING_SETUP" && liveSeatedPlayers < 2
+                  ? "Need 2 Players"
+                  : "Start Game"
               : gameStarted
                 ? "Deal Hand"
                 : "Start Game"}
@@ -1168,21 +1255,16 @@ export function PlayTable() {
       </div>
 
       {/* Render Empty Seats */}
-      {!isTournament && (!isLiveMode || canManageLiveRoom || heroSeatId === null) && Array.from({ length: tableSeatCount }).map((_, i) => {
+      {!isTournament && (!isLiveMode || canManageLiveRoom) && Array.from({ length: tableSeatCount }).map((_, i) => {
         if (players.find(p => p.pos === i)) return null;
         if (phase !== "init" && phase !== "showdown") return null; // Only allow adding between hands
-        const canSitHere = isLiveMode && heroSeatId === null;
         const canAddBotHere = !isLiveMode || canManageLiveRoom;
-        if (!canSitHere && !canAddBotHere) return null;
+        if (!canAddBotHere) return null;
 
         return (
           <div key={`empty-${i}`} className="absolute flex flex-col items-center z-20" style={getPlayerPosStyle(i, tableSeatCount)}>
              <button 
                onClick={() => {
-                 if (canSitHere) {
-                   void handleTakeSeat(i + 1);
-                   return;
-                 }
                  if (canAddBotHere) {
                    setSelectedSeat(i);
                  }
@@ -1190,7 +1272,7 @@ export function PlayTable() {
                className="w-20 h-20 md:w-24 md:h-24 rounded-full border-2 border-dashed border-white/20 bg-black/20 hover:bg-white/10 hover:border-white/50 flex flex-col items-center justify-center transition group shadow-inner"
              >
                <Plus className="w-8 h-8 text-white/30 group-hover:text-white/70 mb-1 transition-colors" />
-               <span className="text-[10px] text-white/40 group-hover:text-white/80 font-bold uppercase tracking-wider transition-colors">{canSitHere ? "Sit Here" : "Add Bot"}</span>
+               <span className="text-[10px] text-white/40 group-hover:text-white/80 font-bold uppercase tracking-wider transition-colors">Add Bot</span>
              </button>
           </div>
         );

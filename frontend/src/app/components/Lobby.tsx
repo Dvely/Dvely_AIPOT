@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   Coins, Menu, Crown, Settings, Plus, Target, Users, Swords, BookOpen, X, Lock, Unlock, LogOut, CheckCircle2, ShoppingBag, Info, Trophy, Timer, Volume2, Globe, ChevronRight
 } from "lucide-react";
-import { getCurrentAuth, signOut } from "../auth";
+import { getCurrentAuth, getCurrentUserId, signOut } from "../auth";
 import { apiFetch } from "../api";
 
 type LobbyRoomType = "ai_bot" | "cash" | "tournament";
@@ -14,10 +14,12 @@ interface LobbyTableSummary {
   name: string;
   type: LobbyRoomType;
   status: string;
+  hostUserId: string;
   currentPlayers: number;
   humanPlayers: number;
   maxPlayers: number;
   isPrivate: boolean;
+  hasBeenPublic: boolean;
   code?: string;
 }
 
@@ -155,6 +157,22 @@ function normalizeAvatarValue(avatar: ProfileAvatar) {
   };
 }
 
+const fallbackTournamentTables: LobbyTableItem[] = [
+  {
+    id: "tournament-fallback",
+    type: "tournament",
+    name: "Sunday Live Tournament",
+    stakes: "-",
+    players: 72,
+    max: 180,
+    isPrivate: false,
+    status: "Registering",
+    buyIn: "TBD",
+    prizePool: "TBD",
+    itm: "TBD",
+  },
+];
+
 function toLobbyTable(summary: LobbyTableSummary): LobbyTableItem {
   const mappedType: LobbyTableItem["type"] =
     summary.type === "ai_bot" ? "bot" : summary.type;
@@ -212,6 +230,7 @@ export function Lobby() {
   const [profileBusy, setProfileBusy] = useState(false);
   
   const { isLoggedIn, isPro, userName, balanceAmount } = getCurrentAuth();
+  const currentUserId = getCurrentUserId();
 
   const navigateToRoom = (roomId: string, state?: Record<string, unknown>) => {
     const query = new URLSearchParams({ roomId }).toString();
@@ -321,9 +340,10 @@ export function Lobby() {
     try {
       const list = await apiFetch<LobbyTableSummary[]>("/lobby/tables");
       const mapped = Array.isArray(list) ? list.map(toLobbyTable) : [];
-      setTables(mapped);
+      const hasTournament = mapped.some((table) => table.type === "tournament");
+      setTables(hasTournament ? mapped : [...mapped, ...fallbackTournamentTables]);
     } catch {
-      setTables([]);
+      setTables([...fallbackTournamentTables]);
     } finally {
       setTableLoading(false);
     }
@@ -817,8 +837,11 @@ export function Lobby() {
                      leaderboard.slice(0, 20).map((entry, index) => (
                        <div
                          key={entry.id}
-                         className="bg-[#11122D] border border-white/10 rounded-xl p-4 flex items-center justify-between"
+                         className={`relative rounded-xl p-4 flex items-center justify-between ${entry.id === currentUserId ? "bg-cyan-900/35 border border-cyan-400/70" : "bg-[#11122D] border border-white/10"}`}
                        >
+                         {entry.id === currentUserId && (
+                           <span className="absolute -top-2 right-3 text-[10px] px-2 py-0.5 rounded-full bg-cyan-400 text-slate-900 font-black">YOU</span>
+                         )}
                          <div className="flex items-center gap-3">
                            <div className={`w-9 h-9 rounded-full flex items-center justify-center font-black ${
                              index === 0

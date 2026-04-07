@@ -129,10 +129,12 @@ export interface TableSummary {
   name: string;
   type: RoomType;
   status: RoomStatus;
+  hostUserId: string;
   currentPlayers: number;
   humanPlayers: number;
   maxPlayers: number;
   isPrivate: boolean;
+  hasBeenPublic: boolean;
   canJoin: boolean;
 }
 

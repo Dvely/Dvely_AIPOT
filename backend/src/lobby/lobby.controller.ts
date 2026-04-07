@@ -27,8 +27,8 @@ export class LobbyController {
 
 	@Get('tables')
 	@ApiOperation({ summary: '로비 테이블 목록 조회 (AI/Cash/Tournament)' })
-	tables(@Query() query: TableListQueryDto) {
-		return this.lobbyService.listTables(query.roomType);
+	tables(@CurrentUser() user: JwtUserPayload, @Query() query: TableListQueryDto) {
+		return this.lobbyService.listTables(user, query.roomType);
 	}
 
 	@Get('tournaments')
