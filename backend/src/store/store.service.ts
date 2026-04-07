@@ -274,6 +274,17 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		);
 	}
 
+	private isSyntheticNickname(nickname: string): boolean {
+		const normalized = this.normalizeNickname(nickname);
+		return (
+			normalized === 'free_user' ||
+			normalized === 'pro_user' ||
+			normalized === 'test' ||
+			normalized.startsWith('seatcheck_') ||
+			normalized.startsWith('viewer_')
+		);
+	}
+
 	private shouldAutoAdvanceRoom(room: RoomRecord): boolean {
 		if (room.status === RoomStatus.CLOSED) {
 			return false;
@@ -301,6 +312,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		}
 
 		let changed = false;
+		const isPrivateAiBotRoom = room.isPrivate && room.type === RoomType.AI_BOT;
 
 		if (room.status === RoomStatus.HAND_ENDED) {
 			room.gameState = null;
@@ -314,9 +326,23 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			room.status = RoomStatus.WAITING_SETUP;
 			this.setReadyState(room);
 			changed = true;
+
+			if (isPrivateAiBotRoom) {
+				const seated = room.seats.filter((seat) => seat.participant);
+				if (seated.length >= 2) {
+					room.status = RoomStatus.DEALING;
+					room.gameState = this.createInitialGameState(
+						room,
+						seated.map((seat) => seat.seatId),
+					);
+					room.status = RoomStatus.IN_HAND;
+					return true;
+				}
+			}
 		}
 
 		if (
+			!isPrivateAiBotRoom &&
 			(room.status === RoomStatus.READY || room.status === RoomStatus.WAITING_SETUP) &&
 			!room.gameState
 		) {
@@ -469,6 +495,11 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 	listRoomSummaries(type?: RoomType): TableSummary[] {
 		return Array.from(this.rooms.values())
 			.filter((room) => room.hostUserId !== 'system-host')
+			.filter((room) => {
+				const host = this.users.get(room.hostUserId);
+				if (!host) return true;
+				return !this.isSyntheticNickname(host.nickname);
+			})
 			.filter((room) => (type ? room.type === type : true))
 			.map((room) => this.roomToSummary(room));
 	}
@@ -482,7 +513,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 				balanceAmount: user.balanceAmount,
 			}))
 			.filter((user) => user.role !== UserRole.GUEST)
-			.filter((user) => !['free_user', 'pro_user'].includes(user.nickname))
+			.filter((user) => !this.isSyntheticNickname(user.nickname))
 			.sort((a, b) => b.balanceAmount - a.balanceAmount || a.nickname.localeCompare(b.nickname));
 	}
 

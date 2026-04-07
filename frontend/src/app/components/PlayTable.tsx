@@ -463,7 +463,7 @@ export function PlayTable() {
           const playerId = isHero ? "hero" : `seat-${seat.seatId}`;
           seatMap.set(seat.seatId, playerId);
 
-          const rawLabel = game?.gameState.positions?.[String(seat.seatId)];
+          const rawLabel = game?.gameState?.positions?.[String(seat.seatId)];
           return {
             id: playerId,
             name: isHero ? "YOU" : participant.displayName,
@@ -1552,8 +1552,8 @@ export function PlayTable() {
                   className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-black px-6 py-4 md:px-10 md:py-5 rounded-xl md:rounded-2xl shadow-[0_6px_0_#A16207] active:translate-y-2 active:shadow-none transition uppercase tracking-wider text-sm md:text-lg"
                 >
                   {isLiveMode
-                    ? ((liveGame?.gameState.minCallAmount ?? 0) > 0
-                      ? `Call ${liveGame?.gameState.minCallAmount ?? 0}`
+                    ? ((liveGame?.gameState?.minCallAmount ?? 0) > 0
+                      ? `Call ${liveGame?.gameState?.minCallAmount ?? 0}`
                       : "Check")
                     : (phase === "preflop" ? "Call 50" : "Check")}
                 </button>
