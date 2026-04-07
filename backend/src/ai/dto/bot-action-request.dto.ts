@@ -58,10 +58,10 @@ export class BotActionRequestDto {
   @IsString()
   model?: string;
 
-  @ApiPropertyOptional({ enum: ['balanced', 'aggressive', 'tight', 'random'] })
+  @ApiPropertyOptional({ enum: ['balanced', 'aggressive', 'tight'] })
   @IsOptional()
-  @IsIn(['balanced', 'aggressive', 'tight', 'random'])
-  playStyle?: 'balanced' | 'aggressive' | 'tight' | 'random';
+  @IsIn(['balanced', 'aggressive', 'tight'])
+  playStyle?: 'balanced' | 'aggressive' | 'tight';
 
   @ApiProperty({ type: BotActionContextDto })
   @ValidateNested()

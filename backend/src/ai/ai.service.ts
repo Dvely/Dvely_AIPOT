@@ -329,10 +329,142 @@ export class AiService {
 		});
 	}
 
+	private customRandomDecision(dto: BotActionRequestDto): AiBotDecision {
+		const asRecord = (value: unknown): Record<string, unknown> => {
+			if (!value || typeof value !== 'object') return {};
+			return value as Record<string, unknown>;
+		};
+
+		const decisionContext = asRecord(dto.context.decisionContext);
+		const actor = asRecord(decisionContext.actorSnapshot);
+		const table = asRecord(decisionContext.tableSummary);
+
+		const style = dto.playStyle ?? 'balanced';
+		const stackAmount = Math.max(0, Number(actor.stackAmount ?? 0));
+		const toCall = Math.max(0, Number(actor.toCallAmount ?? 0));
+		const currentBetAmount = Math.max(0, Number(actor.currentBetAmount ?? 0));
+		const minRaiseTo = Math.max(0, Number(actor.minRaiseTo ?? 0));
+		const maxBetAmount = Math.max(0, Number(actor.maxBetAmount ?? 0));
+		const potAmount = Math.max(0, Number(table.potAmount ?? 0));
+		const bigBlind = Math.max(1, Number(table.blindBig ?? 1));
+
+		const maxTotalBet = currentBetAmount + stackAmount;
+		const canBet = toCall <= 0 && stackAmount > 0;
+		const canRaise = toCall > 0 && maxTotalBet > minRaiseTo;
+		const roll = Math.random();
+
+		const betChance =
+			style === 'aggressive' ? 0.52 : style === 'tight' ? 0.16 : 0.31;
+		const raiseChance =
+			style === 'aggressive' ? 0.44 : style === 'tight' ? 0.12 : 0.24;
+		const callChance =
+			style === 'aggressive' ? 0.78 : style === 'tight' ? 0.42 : 0.62;
+
+		if (canBet && roll < betChance) {
+			const sizingCandidates = [0.33, 0.5, 0.66, 0.8, 1.0, 1.25];
+			const ratio = sizingCandidates[Math.floor(Math.random() * sizingCandidates.length)];
+			const rawBet = Math.max(bigBlind, Math.floor(Math.max(potAmount, bigBlind) * ratio));
+			const betAmount = Math.min(rawBet, stackAmount);
+
+			if (betAmount >= stackAmount) {
+				return {
+					action: ActionType.ALL_IN,
+					amount: stackAmount,
+					reason: 'custom-rng model: random value-bet/jam decision',
+					confidence: 0.55,
+				};
+			}
+
+			return {
+				action: ActionType.BET,
+				amount: betAmount,
+				reason: 'custom-rng model: pot-ratio random c-bet',
+				confidence: 0.58,
+			};
+		}
+
+		if (canRaise && roll < raiseChance) {
+			const raiseRatios = [0.5, 0.75, 1.0, 1.25, 1.5];
+			const ratio = raiseRatios[Math.floor(Math.random() * raiseRatios.length)];
+			const baseTarget = maxBetAmount + Math.floor(Math.max(potAmount, bigBlind) * ratio);
+			const raiseTo = Math.max(minRaiseTo, Math.min(baseTarget, maxTotalBet));
+
+			if (raiseTo >= maxTotalBet) {
+				return {
+					action: ActionType.ALL_IN,
+					amount: stackAmount,
+					reason: 'custom-rng model: random pressure jam',
+					confidence: 0.53,
+				};
+			}
+
+			return {
+				action: ActionType.RAISE,
+				amount: raiseTo,
+				reason: 'custom-rng model: pot-based random raise',
+				confidence: 0.57,
+			};
+		}
+
+		if (toCall <= 0) {
+			return {
+				action: ActionType.CHECK,
+				amount: 0,
+				reason: 'custom-rng model: check branch selected',
+				confidence: 0.5,
+			};
+		}
+
+		const stackPressure = stackAmount > 0 ? toCall / stackAmount : 1;
+		const effectiveCallChance =
+			stackPressure > 0.5
+				? callChance * 0.45
+				: stackPressure > 0.25
+					? callChance * 0.7
+					: callChance;
+
+		if (roll < effectiveCallChance) {
+			if (toCall >= stackAmount) {
+				return {
+					action: ActionType.ALL_IN,
+					amount: stackAmount,
+					reason: 'custom-rng model: forced all-in call',
+					confidence: 0.51,
+				};
+			}
+
+			return {
+				action: ActionType.CALL,
+				amount: toCall,
+				reason: 'custom-rng model: random call branch',
+				confidence: 0.54,
+			};
+		}
+
+		return {
+			action: ActionType.FOLD,
+			amount: 0,
+			reason: 'custom-rng model: random fold branch',
+			confidence: 0.56,
+		};
+	}
+
 	async generateBotAction(dto: BotActionRequestDto, role: UserRole) {
 		const modelTier = dto.modelTier ?? BotModelTier.FREE;
 		if (modelTier === BotModelTier.PAID && role !== UserRole.PRO) {
 			throw new ForbiddenException('PRO 권한만 유료 AI 모델을 사용할 수 있습니다.');
+		}
+
+		if (modelTier === BotModelTier.RANDOM) {
+			const decision = this.customRandomDecision(dto);
+			const provider = dto.provider ?? LlmProvider.LOCAL;
+			const model = dto.model ?? 'custom-rng-v1';
+			return {
+				provider,
+				model,
+				decision,
+				raw: JSON.stringify(decision),
+			};
 		}
 
 		const provider = dto.provider ?? LlmProvider.LOCAL;

@@ -72,7 +72,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		this.timeoutTicker = setInterval(() => {
 			let dirty = false;
 			for (const room of this.rooms.values()) {
-				if (this.shouldDeleteIdleAiRoom(room)) {
+				if (this.shouldDeleteRoomWithoutHumans(room)) {
 					this.rooms.delete(room.id);
 					dirty = true;
 					continue;
@@ -314,12 +314,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		).length;
 	}
 
-	private shouldDeleteIdleAiRoom(room: RoomRecord): boolean {
-		return (
-			room.type === RoomType.AI_BOT &&
-			!room.isPrivate &&
-			this.countHumanParticipants(room) === 0
-		);
+	private shouldDeleteRoomWithoutHumans(room: RoomRecord): boolean {
+		return this.countHumanParticipants(room) === 0;
 	}
 
 	private isSyntheticNickname(nickname: string): boolean {
@@ -698,6 +694,12 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		}
 
 		seat.participant = null;
+		if (this.countHumanParticipants(room) === 0) {
+			this.rooms.delete(room.id);
+			this.markDirty();
+			return room;
+		}
+
 		if (!leaveDuringHand) {
 			this.setReadyState(room);
 		}

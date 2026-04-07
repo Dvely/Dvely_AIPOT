@@ -67,18 +67,25 @@ interface LiveRoom {
   blindBig: number;
   seats: LiveSeat[];
 }
-type BotStyle = "balanced" | "aggressive" | "tight" | "random";
+type BotStyle = "balanced" | "aggressive" | "tight";
 
 interface BotModelOption {
   id: string;
   label: string;
   provider: "local" | "openai" | "claude" | "gemini";
-  modelTier: "free" | "paid";
+  modelTier: "free" | "paid" | "random";
   model: string;
   proOnly?: boolean;
 }
 
 const BOT_MODEL_OPTIONS: BotModelOption[] = [
+  {
+    id: "random-custom",
+    label: "Custom RNG Policy (No LLM)",
+    provider: "local",
+    modelTier: "random",
+    model: "custom-rng-v1",
+  },
   {
     id: "local-qwen",
     label: "Local Qwen 2.5 Coder",
@@ -922,6 +929,12 @@ export function PlayTable() {
       setGameStarted(room.status !== "WAITING_SETUP");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load room state.";
+      if (
+        /룸을 찾을 수 없습니다|Room not found|404/i.test(message)
+      ) {
+        navigate("/lobby");
+        return;
+      }
       setLog(message);
     }
   };
@@ -2209,7 +2222,6 @@ export function PlayTable() {
                      <option value="balanced">{t("Balanced")}</option>
                      <option value="aggressive">{t("Aggressive")}</option>
                      <option value="tight">{t("Tight")}</option>
-                     <option value="random">{t("Random")}</option>
                    </select>
                  </div>
                  <button 

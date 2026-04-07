@@ -62,9 +62,7 @@ export class GameService {
 				? 0.48
 				: style === 'tight'
 					? 0.14
-					: style === 'random'
-						? 0.32
-						: 0.24;
+					: 0.24;
 
 		const toCall = Math.max(state.maxBetAmount - bot.currentBetAmount, 0);
 		const maxTotalBet = bot.currentBetAmount + bot.stackAmount;
@@ -112,14 +110,6 @@ export class GameService {
 		if (
 			style === 'aggressive' &&
 			toCall <= Math.max(room.blindBig * 3, Math.floor(bot.stackAmount * 0.4))
-		) {
-			return { action: ActionType.CALL };
-		}
-
-		if (
-			style === 'random' &&
-			Math.random() < 0.2 &&
-			toCall <= Math.max(room.blindBig * 3, Math.floor(bot.stackAmount * 0.35))
 		) {
 			return { action: ActionType.CALL };
 		}

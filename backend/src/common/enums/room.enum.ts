@@ -32,6 +32,7 @@ export enum ParticipantType {
 export enum BotModelTier {
   FREE = 'free',
   PAID = 'paid',
+  RANDOM = 'random',
 }
 
 export enum LlmProvider {

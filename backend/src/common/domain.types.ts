@@ -52,7 +52,7 @@ export interface JwtUserPayload {
 export interface BotConfig {
   modelTier: BotModelTier;
   provider: LlmProvider;
-  style: 'balanced' | 'aggressive' | 'tight' | 'random';
+  style: 'balanced' | 'aggressive' | 'tight';
   model?: string;
 }
 

@@ -11,9 +11,9 @@ export class AddBotDto {
   @IsEnum(LlmProvider)
   provider!: LlmProvider;
 
-  @ApiProperty({ enum: ['balanced', 'aggressive', 'tight', 'random'] })
-  @IsIn(['balanced', 'aggressive', 'tight', 'random'])
-  style!: 'balanced' | 'aggressive' | 'tight' | 'random';
+  @ApiProperty({ enum: ['balanced', 'aggressive', 'tight'] })
+  @IsIn(['balanced', 'aggressive', 'tight'])
+  style!: 'balanced' | 'aggressive' | 'tight';
 
   @ApiPropertyOptional({ example: 'gpt-4.1-mini' })
   @IsOptional()
