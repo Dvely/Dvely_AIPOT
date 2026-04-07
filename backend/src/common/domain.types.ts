@@ -106,6 +106,8 @@ export interface GameState {
   actedSeatIds: number[];
   lastAggressiveSeatId: number | null;
   maxBetAmount: number;
+  runoutMode?: boolean;
+  runoutNextAtMs?: number;
   winnerPlayerIds?: string[];
 }
 

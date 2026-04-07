@@ -28,7 +28,7 @@ interface Player {
 }
 
 type LiveActionType = "fold" | "check" | "call" | "bet" | "raise" | "all-in";
-type ActionFxType = "check" | "fold" | "all-in";
+type ActionFxType = "check" | "call" | "bet" | "raise" | "fold" | "all-in";
 
 interface LiveParticipant {
   seatId: number;
@@ -279,7 +279,7 @@ const SHOWDOWN_RESULT_DISPLAY_MS = 8000;
 const QUICK_RESULT_DISPLAY_MS = 8000;
 const HAND_RESET_CLEANUP_MS = 5000;
 const LIVE_SYNC_INTERVAL_MS = 600;
-const ACTION_FX_DURATION_MS = 950;
+const ACTION_FX_DURATION_MS = 1000;
 const SHOWDOWN_AFTER_ACTION_DELAY_MS = 800;
 
 const RAW_SUITS = ["S", "H", "D", "C"];
@@ -896,7 +896,7 @@ export function PlayTable() {
           lastSeenLiveActionKeyRef.current = latestActionKey;
 
           const actorPlayerId = seatMap.get(latestAction.seatId);
-          if (actorPlayerId && (latestAction.action === "check" || latestAction.action === "fold" || latestAction.action === "all-in")) {
+          if (actorPlayerId) {
             triggerActionFx(actorPlayerId, latestAction.action as ActionFxType);
           }
 
@@ -1974,6 +1974,9 @@ export function PlayTable() {
         const isTimerActive = isPlayerTurn;
         const actionFx = actionFxByPlayer[p.id];
         const hasCheckFx = actionFx?.type === "check";
+        const hasCallFx = actionFx?.type === "call";
+        const hasBetFx = actionFx?.type === "bet";
+        const hasRaiseFx = actionFx?.type === "raise";
         const hasFoldFx = actionFx?.type === "fold";
         const hasAllInFx = Boolean(p.allIn) || actionFx?.type === "all-in";
         const roleBadgeClass =
@@ -1986,11 +1989,29 @@ export function PlayTable() {
                 : "bg-slate-600 text-white";
         const avatarStateClass = hasAllInFx
           ? "border-violet-400 shadow-[0_0_30px_rgba(139,92,246,0.6)]"
-          : hasCheckFx
+          : hasBetFx || hasRaiseFx
+            ? "border-red-400 shadow-[0_0_24px_rgba(248,113,113,0.55)]"
+            : hasCheckFx || hasCallFx
             ? "border-yellow-300 shadow-[0_0_24px_rgba(250,204,21,0.55)]"
             : isTimerActive
               ? "border-cyan-400 shadow-[0_0_30px_rgba(6,182,212,0.6)] scale-105 transition-transform"
               : "border-slate-700";
+        const actionOverlayLabel = hasAllInFx
+          ? "ALL-IN"
+          : hasRaiseFx
+            ? "RAISE"
+            : hasBetFx
+              ? "BET"
+              : hasCallFx
+                ? "CALL"
+                : hasCheckFx
+                  ? "V"
+                  : null;
+        const actionOverlayTone = hasAllInFx
+          ? "border-violet-300 bg-violet-600/90 text-white"
+          : hasBetFx || hasRaiseFx
+            ? "border-red-300 bg-red-600/90 text-white"
+            : "border-yellow-300 bg-yellow-400/90 text-slate-900";
 
         return (
         <div key={p.id} className={`absolute flex flex-col items-center z-30 transition-all ${p.id === 'hero' && userState !== 'playing' ? 'opacity-40 grayscale sepia' : ''}`} style={getPlayerPosStyle(p.pos, tableSeatCount)}>
@@ -2083,24 +2104,17 @@ export function PlayTable() {
 
             <img src={p.avatarUrl ?? toAvatarUrl(p.avatarSeed)} alt={p.name} className="w-full h-full object-cover rounded-full" />
 
-            {hasCheckFx && (
+            {actionOverlayLabel && p.status !== "folded" && (
               <motion.div
                 initial={{ opacity: 0, y: 6, scale: 0.9 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -4, scale: 0.9 }}
-                className="absolute -top-10 left-1/2 -translate-x-1/2 bg-yellow-400 text-slate-900 px-2 py-1 rounded-full text-[10px] md:text-xs font-black tracking-wider border border-yellow-200 shadow-[0_0_12px_rgba(250,204,21,0.5)] flex items-center gap-1"
+                className="absolute inset-0 bg-black/55 rounded-full flex items-center justify-center"
               >
-                <Check className="w-3 h-3" /> V
-              </motion.div>
-            )}
-
-            {hasAllInFx && (
-              <motion.div
-                initial={{ opacity: 0, y: 6, scale: 0.9 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                className="absolute -bottom-4 left-1/2 -translate-x-1/2 bg-violet-600 text-white px-3 py-1 rounded-full text-[10px] md:text-xs font-black tracking-wider border border-violet-300 shadow-[0_0_14px_rgba(139,92,246,0.6)]"
-              >
-                ALL-IN
+                <span className={`px-2.5 py-1 rounded-full border text-[10px] md:text-xs font-black tracking-wider shadow-lg flex items-center gap-1 ${actionOverlayTone}`}>
+                  {hasCheckFx ? <Check className="w-3 h-3" /> : null}
+                  {actionOverlayLabel}
+                </span>
               </motion.div>
             )}
             

@@ -83,6 +83,16 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 				}
 
 				if (room.status === RoomStatus.IN_HAND && room.gameState) {
+					if (this.shouldStartAllInRunout(room)) {
+						this.beginAllInRunout(room);
+						dirty = true;
+					}
+
+					if (this.advanceAllInRunout(room)) {
+						dirty = true;
+						continue;
+					}
+
 					this.autoResolveTimeout(room.id);
 				}
 			}
@@ -1041,6 +1051,57 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		room.gameState.actedSeatIds = [];
 	}
 
+	private shouldStartAllInRunout(room: RoomRecord): boolean {
+		const state = room.gameState;
+		if (!state || room.status !== RoomStatus.IN_HAND) return false;
+		if (state.runoutMode) return false;
+		if (state.street === HandStreet.SHOWDOWN || state.street === HandStreet.RESULT) {
+			return false;
+		}
+
+		const active = room.seats
+			.map((seat) => seat.participant)
+			.filter((participant): participant is PlayerState => !!participant)
+			.filter((participant) => !participant.folded);
+		if (active.length <= 1) return false;
+
+		const actionable = active.filter((participant) => !participant.allIn);
+		return actionable.length <= 1;
+	}
+
+	private beginAllInRunout(room: RoomRecord) {
+		const state = room.gameState;
+		if (!state) return;
+
+		state.runoutMode = true;
+		state.runoutNextAtMs = Date.now() + 450;
+		state.currentTurnSeatId = null;
+		state.actionTimerDeadline = null;
+	}
+
+	private advanceAllInRunout(room: RoomRecord): boolean {
+		const state = room.gameState;
+		if (!state || room.status !== RoomStatus.IN_HAND || !state.runoutMode) {
+			return false;
+		}
+
+		const dueAt = state.runoutNextAtMs ?? 0;
+		if (Date.now() < dueAt) {
+			return false;
+		}
+
+		this.moveStreet(room);
+		if (!room.gameState || room.status !== RoomStatus.IN_HAND) {
+			return true;
+		}
+
+		room.gameState.runoutMode = true;
+		room.gameState.runoutNextAtMs = Date.now() + 700;
+		room.gameState.currentTurnSeatId = null;
+		room.gameState.actionTimerDeadline = null;
+		return true;
+	}
+
 	private dealBoardCards(room: RoomRecord, count: number) {
 		if (!room.gameState) return;
 		for (let i = 0; i < count; i += 1) {
@@ -1396,6 +1457,12 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			return;
 		}
 
+		if (state.runoutMode) {
+			state.currentTurnSeatId = null;
+			state.actionTimerDeadline = null;
+			return;
+		}
+
 		const activeAggressorSeat = state.lastAggressiveSeatId
 			? room.seats.find(
 					(seat) =>
@@ -1537,6 +1604,12 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		const remaining = this.activePlayers(room);
 		if (remaining.length === 1) {
 			this.completeHand(room, [remaining[0]]);
+			return room;
+		}
+
+		if (this.shouldStartAllInRunout(room)) {
+			this.beginAllInRunout(room);
+			this.markDirty();
 			return room;
 		}
 
@@ -1813,6 +1886,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			actedSeatIds: [],
 			lastAggressiveSeatId: bbSeatId ?? null,
 			maxBetAmount: room.blindBig,
+			runoutMode: false,
+			runoutNextAtMs: 0,
 			winnerPlayerIds: [],
 		};
 	}

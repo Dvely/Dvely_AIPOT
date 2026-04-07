@@ -384,9 +384,11 @@ export class GameService {
 			room.status === RoomStatus.HAND_ENDED &&
 			room.gameState?.street === HandStreet.RESULT &&
 			latestAction?.action === ActionType.FOLD;
+		const revealForRunout = Boolean(room.gameState?.runoutMode);
 		const revealAllCards =
 			room.status === RoomStatus.SHOWDOWN ||
-			(room.status === RoomStatus.HAND_ENDED && !endedByFold);
+			(room.status === RoomStatus.HAND_ENDED && !endedByFold) ||
+			revealForRunout;
 
 		const seats = room.seats.map((seat) => {
 			if (!seat.participant) return seat;
