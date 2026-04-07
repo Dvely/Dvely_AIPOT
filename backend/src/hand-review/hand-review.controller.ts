@@ -45,7 +45,7 @@ export class HandReviewController {
 	}
 
 	@Post('hands/:handId/analyze')
-	@ApiOperation({ summary: 'LLM 심화 핸드 리뷰 분석(PRO)' })
+	@ApiOperation({ summary: '플레이 전체 액션 일괄 평가 및 저장(PRO)' })
 	analyze(
 		@CurrentUser() user: JwtUserPayload,
 		@Param('handId') handId: string,

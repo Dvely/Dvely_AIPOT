@@ -55,14 +55,36 @@ export class HandReviewService {
 		this.assertCanRead(user);
 
 		const hand = this.store.getHandReview(handId, user.sub);
-
-		return this.aiService.analyzeHandReview({
+		const result = await this.aiService.analyzeAllHandActions({
 			handId,
 			handContext: hand,
 			provider: dto.provider,
 			model: dto.model,
 			includePremiumAnalysis: dto.includePremiumAnalysis ?? true,
 		});
+
+		const saved = result.reviews.map((review) =>
+			this.store.addHandActionAnalysis({
+				handId,
+				userId: user.sub,
+				actionOrder: review.order,
+				provider: result.provider ?? dto.provider ?? LlmProvider.LOCAL,
+				model: result.model ?? dto.model ?? 'local-default',
+				analysis: review.analysis,
+			}),
+		);
+
+		return {
+			handId,
+			provider: result.provider,
+			model: result.model,
+			summary: result.summary,
+			actions: saved.map((item) => ({
+				order: item.actionOrder,
+				analysis: item.analysis,
+				createdAt: item.createdAt,
+			})),
+		};
 	}
 
 	async analyzeAction(

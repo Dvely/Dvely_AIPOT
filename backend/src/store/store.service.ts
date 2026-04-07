@@ -320,20 +320,11 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			return false;
 		}
 
-		if (!room.isPrivate) {
-			return true;
-		}
-
-		if (room.type !== RoomType.AI_BOT) {
+		if (room.isPrivate) {
 			return false;
 		}
 
-		const hasBot = room.seats.some(
-			(seat) => seat.participant?.roleType === ParticipantType.BOT,
-		);
-		const seated = this.countParticipants(room);
-		const humans = this.countHumanParticipants(room);
-		return hasBot && seated >= 2 && humans >= 1;
+		return true;
 	}
 
 	private autoAdvanceRoom(room: RoomRecord): boolean {

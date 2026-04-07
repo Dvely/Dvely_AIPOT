@@ -8,6 +8,9 @@ import { ActionType, BotModelTier, LlmProvider } from '../common/enums/room.enum
 import { BotActionRequestDto } from './dto/bot-action-request.dto';
 import { HandReviewRequestDto } from './dto/hand-review-request.dto';
 
+const BOT_PROVIDER_TIMEOUT_MS = 4000;
+const REVIEW_PROVIDER_TIMEOUT_MS = 20000;
+
 @Injectable()
 export class AiService {
 	constructor(
@@ -95,6 +98,7 @@ export class AiService {
 		model: string;
 		systemPrompt: string;
 		userPrompt: string;
+		timeoutMs?: number;
 	}): Promise<string> {
 		const endpoint = `${options.baseUrl.replace(/\/$/, '')}/chat/completions`;
 		const headers: Record<string, string> = {
@@ -116,7 +120,7 @@ export class AiService {
 						{ role: 'user', content: options.userPrompt },
 					],
 				},
-				{ headers, timeout: 4000 },
+				{ headers, timeout: options.timeoutMs ?? BOT_PROVIDER_TIMEOUT_MS },
 			),
 		);
 
@@ -130,6 +134,7 @@ export class AiService {
 		model: string;
 		systemPrompt: string;
 		userPrompt: string;
+		timeoutMs?: number;
 	}): Promise<string> {
 		const apiKey = this.configService.get<string>('ANTHROPIC_API_KEY');
 		if (!apiKey) {
@@ -147,7 +152,7 @@ export class AiService {
 					messages: [{ role: 'user', content: options.userPrompt }],
 				},
 				{
-					timeout: 4000,
+					timeout: options.timeoutMs ?? BOT_PROVIDER_TIMEOUT_MS,
 					headers: {
 						'Content-Type': 'application/json',
 						'x-api-key': apiKey,
@@ -166,6 +171,7 @@ export class AiService {
 		model: string;
 		systemPrompt: string;
 		userPrompt: string;
+		timeoutMs?: number;
 	}): Promise<string> {
 		const apiKey = this.configService.get<string>('GEMINI_API_KEY');
 		if (!apiKey) {
@@ -192,7 +198,7 @@ export class AiService {
 						responseMimeType: 'application/json',
 					},
 				},
-				{ timeout: 4000 },
+				{ timeout: options.timeoutMs ?? BOT_PROVIDER_TIMEOUT_MS },
 			),
 		);
 
@@ -207,6 +213,7 @@ export class AiService {
 		model: string;
 		systemPrompt: string;
 		userPrompt: string;
+		timeoutMs?: number;
 	}): Promise<string> {
 		if (options.provider === LlmProvider.OPENAI) {
 			const base = this.configService.get('OPENAI_BASE_URL', 'https://api.openai.com/v1');
@@ -220,6 +227,7 @@ export class AiService {
 				model: options.model,
 				systemPrompt: options.systemPrompt,
 				userPrompt: options.userPrompt,
+				timeoutMs: options.timeoutMs,
 			});
 		}
 
@@ -228,6 +236,7 @@ export class AiService {
 				model: options.model,
 				systemPrompt: options.systemPrompt,
 				userPrompt: options.userPrompt,
+				timeoutMs: options.timeoutMs,
 			});
 		}
 
@@ -236,6 +245,7 @@ export class AiService {
 				model: options.model,
 				systemPrompt: options.systemPrompt,
 				userPrompt: options.userPrompt,
+				timeoutMs: options.timeoutMs,
 			});
 		}
 
@@ -250,6 +260,7 @@ export class AiService {
 			model: options.model,
 			systemPrompt: options.systemPrompt,
 			userPrompt: options.userPrompt,
+			timeoutMs: options.timeoutMs,
 		});
 	}
 
@@ -325,17 +336,167 @@ export class AiService {
 			2,
 		);
 
-		const analysis = await this.runProvider({
-			provider,
-			model,
-			systemPrompt,
-			userPrompt,
-		});
+		let analysis = '';
+		try {
+			analysis = await this.runProvider({
+				provider,
+				model,
+				systemPrompt,
+				userPrompt,
+				timeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
+			});
+		} catch {
+			analysis = [
+				'1) Key Mistakes',
+				'- LLM 응답 지연으로 상세 분석을 생성하지 못했습니다.',
+				'2) Better Lines',
+				'- 현재 액션 로그 기준으로 포지션/팟오즈 중심 재검토를 권장합니다.',
+				'3) Exploit Notes',
+				'- 다음 시도에서 모델/프롬프트를 유지하고 재분석해 비교하세요.',
+				premium ? '4) GTO-Style Deep Notes' : '4) Basic Improvement Plan',
+				'- 타임아웃으로 심화 분석이 생략되었습니다.',
+			].join('\n');
+		}
 
 		return {
 			provider,
 			model,
 			analysis,
 		};
+	}
+
+	async analyzeAllHandActions(dto: HandReviewRequestDto) {
+		const provider = dto.provider ?? LlmProvider.LOCAL;
+		const model = this.providerModel(provider, dto.model);
+		const premium = dto.includePremiumAnalysis ?? true;
+
+		const context = dto.handContext as {
+			participants?: Array<{ seatId?: number; displayName?: string; roleType?: string }>;
+			boardCards?: string[];
+			actions?: Array<{
+				order?: number;
+				seatId?: number;
+				playerId?: string;
+				action?: string;
+				amount?: number;
+				potAfter?: number;
+				street?: string;
+			}>;
+		};
+
+		const participants = (context.participants ?? []).map((participant) => ({
+			seatId: participant.seatId ?? 0,
+			displayName: participant.displayName ?? 'Unknown',
+			roleType: participant.roleType ?? 'unknown',
+		}));
+
+		const actions = (context.actions ?? [])
+			.filter((action) => Number.isInteger(action.order) && (action.order ?? 0) > 0)
+			.map((action) => ({
+				order: action.order as number,
+				seatId: action.seatId ?? 0,
+				playerId: action.playerId ?? '',
+				action: action.action ?? 'unknown',
+				amount: action.amount ?? 0,
+				potAfter: action.potAfter ?? 0,
+				street: action.street ?? 'UNKNOWN',
+			}));
+
+		if (actions.length === 0) {
+			return {
+				provider,
+				model,
+				summary: '분석할 액션 로그가 없습니다.',
+				reviews: [] as Array<{ order: number; analysis: string }>,
+			};
+		}
+
+		const systemPrompt = [
+			'You are AIPOT action-by-action poker reviewer.',
+			'Evaluate each action order in the provided hand.',
+			'Return strict JSON only.',
+			'Schema: {"summary":string,"actions":[{"order":number,"analysis":string,"verdict":"good|neutral|bad","score":-5..5,"betterLine":string}]}',
+			'If uncertain, still provide concise feedback per action order.',
+			premium ? 'Include deeper tactical notes in analysis text.' : 'Keep analysis practical and concise.',
+		].join(' ');
+
+		const userPrompt = JSON.stringify(
+			{
+				handId: dto.handId,
+				boardCards: context.boardCards ?? [],
+				participants,
+				actions,
+			},
+			null,
+			2,
+		);
+
+		try {
+			const raw = await this.runProvider({
+				provider,
+				model,
+				systemPrompt,
+				userPrompt,
+				timeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
+			});
+
+			const parsed = this.extractJson(raw);
+			const summary =
+				typeof parsed?.summary === 'string' && parsed.summary.trim().length > 0
+					? parsed.summary.trim()
+					: '핸드 전체 액션 평가가 생성되었습니다.';
+
+			const parsedActions = Array.isArray(parsed?.actions)
+				? (parsed.actions as Array<Record<string, unknown>>)
+				: [];
+			const byOrder = new Map<number, string>();
+
+			for (const item of parsedActions) {
+				const order = Number(item.order ?? NaN);
+				if (!Number.isInteger(order) || order < 1) continue;
+
+				const analysis = String(item.analysis ?? '').trim();
+				const verdict = String(item.verdict ?? '').trim();
+				const score = Number(item.score ?? NaN);
+				const betterLine = String(item.betterLine ?? '').trim();
+
+				const chunks: string[] = [];
+				if (analysis) chunks.push(analysis);
+				if (betterLine) chunks.push(`Better line: ${betterLine}`);
+				if (verdict || Number.isFinite(score)) {
+					const scoreLabel = Number.isFinite(score) ? ` (${score})` : '';
+					chunks.push(`Verdict: ${verdict || 'neutral'}${scoreLabel}`);
+				}
+
+				byOrder.set(
+					order,
+					chunks.join('\n').trim() || '해당 액션에 대한 상세 텍스트가 제공되지 않았습니다.',
+				);
+			}
+
+			const reviews = actions.map((action) => ({
+				order: action.order,
+				analysis:
+					byOrder.get(action.order) ??
+					`Action #${action.order}: ${action.action.toUpperCase()} / ${action.street} - 기본 리뷰를 생성했습니다.`,
+			}));
+
+			return {
+				provider,
+				model,
+				summary,
+				reviews,
+			};
+		} catch {
+			return {
+				provider,
+				model,
+				summary: 'LLM 응답 지연으로 폴백 리뷰를 생성했습니다.',
+				reviews: actions.map((action) => ({
+					order: action.order,
+					analysis: `Action #${action.order}: ${action.action.toUpperCase()} / ${action.street} - 타임아웃으로 상세 분석을 생성하지 못했습니다.`,
+				})),
+			};
+		}
 	}
 }

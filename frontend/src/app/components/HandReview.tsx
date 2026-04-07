@@ -51,13 +51,16 @@ interface HandActionAnalysisRecord {
   createdAt: string;
 }
 
-interface ActionAnalysisResponse {
+interface HandAnalyzeResponse {
   handId: string;
-  actionOrder: number;
   provider: "local" | "openai" | "claude" | "gemini";
   model: string;
-  analysis: string;
-  createdAt: string;
+  summary: string;
+  actions: Array<{
+    order: number;
+    analysis: string;
+    createdAt: string;
+  }>;
 }
 
 interface HandReviewAction {
@@ -175,6 +178,15 @@ function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): H
 
   const resolvedOpponents = opponents.length > 0 ? opponents : fallbackOpponents;
   const heroCards = heroParticipant?.holeCards?.map(toUiCard) ?? [];
+  const heroContribution = heroParticipant
+    ? record.actions
+        .filter((action) => action.playerId === heroParticipant.playerId)
+        .reduce((sum, action) => sum + Math.max(action.amount, 0), 0)
+    : 0;
+  const heroWon = Boolean(heroParticipant && record.winnerPlayerId === heroParticipant.playerId);
+  const handNet = heroParticipant
+    ? (heroWon ? record.resultPot - heroContribution : -heroContribution)
+    : record.resultPot;
   const winnerLabel =
     participants.find((participant) => participant.playerId === record.winnerPlayerId)
       ?.displayName ?? record.winnerPlayerId.slice(0, 8);
@@ -236,7 +248,7 @@ function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): H
     date: toRelativeDate(record.createdAt),
     title: `Hand #${record.handId.slice(0, 8)}`,
     stakes: "LIVE",
-    net: record.resultPot,
+    net: handNet,
     favorite: Boolean(viewerUserId && (record.favoriteUserIds ?? []).includes(viewerUserId)),
     steps,
   };
@@ -322,7 +334,8 @@ export function HandReview() {
   const [historyFilter, setHistoryFilter] = useState<"all" | "favorites">("all");
   const [analysisProvider, setAnalysisProvider] = useState<AnalysisProvider>("local");
   const [analysisModel, setAnalysisModel] = useState(ANALYSIS_MODELS.local[0].value);
-  const [analysisBusyOrder, setAnalysisBusyOrder] = useState<number | null>(null);
+  const [handAnalyzeBusy, setHandAnalyzeBusy] = useState(false);
+  const [analysisSummary, setAnalysisSummary] = useState("");
   const [analysisError, setAnalysisError] = useState("");
   const [stepAnalysisMap, setStepAnalysisMap] = useState<Record<number, string>>({});
   const logRef = useRef<HTMLDivElement>(null);
@@ -405,14 +418,15 @@ export function HandReview() {
     }
   };
 
-  const analyzeActionStep = async (order: number) => {
-    if (!selectedHand || analysisBusyOrder !== null) return;
+  const analyzeWholeHand = async () => {
+    if (!selectedHand || handAnalyzeBusy) return;
 
-    setAnalysisBusyOrder(order);
+    setHandAnalyzeBusy(true);
+    setAnalysisSummary("");
     setAnalysisError("");
     try {
-      const response = await apiFetch<ActionAnalysisResponse>(
-        `/hand-review/hands/${selectedHand.id}/actions/${order}/analyze`,
+      const response = await apiFetch<HandAnalyzeResponse>(
+        `/hand-review/hands/${selectedHand.id}/analyze`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -423,20 +437,21 @@ export function HandReview() {
         },
       );
 
-      setStepAnalysisMap((prev) => ({
-        ...prev,
-        [order]: response.analysis,
-      }));
+      const nextMap = response.actions.reduce<Record<number, string>>((acc, item) => {
+        acc[item.order] = item.analysis;
+        return acc;
+      }, {});
+      setStepAnalysisMap((prev) => ({ ...prev, ...nextMap }));
 
       setSelectedHand((prev) => {
         if (!prev || prev.id !== response.handId) return prev;
         return {
           ...prev,
           steps: prev.steps.map((step) =>
-            step.order === order
+            step.order !== null && nextMap[step.order]
               ? {
                   ...step,
-                  analysis: response.analysis,
+                  analysis: nextMap[step.order],
                 }
               : step,
           ),
@@ -450,20 +465,22 @@ export function HandReview() {
             : {
                 ...hand,
                 steps: hand.steps.map((step) =>
-                  step.order === order
+                  step.order !== null && nextMap[step.order]
                     ? {
                         ...step,
-                        analysis: response.analysis,
+                        analysis: nextMap[step.order],
                       }
                     : step,
                 ),
               },
         ),
       );
+
+      setAnalysisSummary(response.summary?.trim() ?? "");
     } catch (error) {
-      setAnalysisError(error instanceof Error ? error.message : "액션 분석에 실패했습니다.");
+      setAnalysisError(error instanceof Error ? error.message : "핸드 분석에 실패했습니다.");
     } finally {
-      setAnalysisBusyOrder(null);
+      setHandAnalyzeBusy(false);
     }
   };
 
@@ -625,8 +642,8 @@ export function HandReview() {
                   <div className="mt-4 md:mt-0 flex items-center justify-between md:justify-end md:gap-6 border-t md:border-t-0 border-white/5 pt-4 md:pt-0">
                     <div className="flex flex-col items-end">
                       <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Net Result</span>
-                      <span className={`text-xl font-black ${hand.net > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {hand.net > 0 ? '+' : ''}${Math.abs(hand.net).toLocaleString()}
+                      <span className={`text-xl font-black ${hand.net > 0 ? 'text-green-400' : hand.net < 0 ? 'text-red-400' : 'text-slate-300'}`}>
+                        {hand.net > 0 ? '+' : hand.net < 0 ? '-' : ''}${Math.abs(hand.net).toLocaleString()}
                       </span>
                     </div>
                     <div className="bg-orange-500/20 p-3 rounded-full group-hover:bg-orange-500 group-hover:text-white transition-colors">
@@ -692,6 +709,16 @@ export function HandReview() {
               <option key={`${analysisProvider}-${item.value}`} value={item.value}>{item.label}</option>
             ))}
           </select>
+          <button
+            onClick={() => {
+              void analyzeWholeHand();
+            }}
+            disabled={handAnalyzeBusy}
+            className="px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider border border-orange-500/40 bg-orange-500/20 text-orange-300 hover:bg-orange-500/30 disabled:opacity-60 flex items-center gap-1"
+          >
+            <BrainCircuit className="w-3 h-3" />
+            {handAnalyzeBusy ? "Analyzing" : "Analyze Hand"}
+          </button>
           <div className="bg-orange-500/20 text-orange-400 px-3 py-1 rounded-full font-mono text-xs font-bold border border-orange-500/30 flex items-center gap-2 uppercase tracking-wider">
             <Target className="w-3 h-3" /> Step Analysis
           </div>
@@ -807,8 +834,6 @@ export function HandReview() {
                  const isActive = idx === stepIdx;
                    const isHero = step.isHeroAction;
                  const isSystem = step.player === "System";
-                   const stepOrder = step.order;
-                   const isAnalyzing = stepOrder !== null && analysisBusyOrder === stepOrder;
 
                  return (
                    <div 
@@ -833,19 +858,6 @@ export function HandReview() {
                           {step.desc}
                         </span>
                       </div>
-                      {!isSystem && stepOrder !== null && (
-                        <button
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void analyzeActionStep(stepOrder);
-                          }}
-                          disabled={analysisBusyOrder !== null}
-                          className="shrink-0 px-2 py-1 rounded-md border border-orange-500/40 bg-orange-500/10 text-orange-300 text-[10px] font-black uppercase tracking-wider hover:bg-orange-500/20 disabled:opacity-50 flex items-center gap-1"
-                        >
-                          <BrainCircuit className="w-3 h-3" />
-                          {isAnalyzing ? "Analyzing" : "Analyze"}
-                        </button>
-                      )}
                    </div>
                  )
                })}
@@ -874,6 +886,9 @@ export function HandReview() {
                         )}
                       </h4>
                       <p className="text-sm text-slate-300 leading-relaxed">{currentStepAnalysis}</p>
+                      {analysisSummary && (
+                        <p className="mt-2 text-xs font-semibold text-cyan-300">{analysisSummary}</p>
+                      )}
                       {analysisError && (
                         <p className="mt-2 text-xs font-semibold text-red-300">{analysisError}</p>
                       )}

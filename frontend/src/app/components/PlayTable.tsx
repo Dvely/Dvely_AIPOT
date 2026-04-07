@@ -596,13 +596,7 @@ export function PlayTable() {
     : roomMode === "cash"
       ? "Cash Game"
       : "Game Table";
-  const hasLiveBot = liveRoom?.seats.some((seat) => seat.participant?.roleType === "bot") ?? false;
-  const autoContinueBotRoom = Boolean(
-    isLiveMode &&
-    liveRoom?.type === "ai_bot" &&
-    liveRoom?.isPrivate &&
-    hasLiveBot,
-  );
+  const autoContinueBotRoom = false;
   const isHeroLiveTurn = Boolean(
     isLiveMode &&
     heroSeatId !== null &&
