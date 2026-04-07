@@ -1,6 +1,7 @@
 export type MembershipTier = "free" | "pro";
 export type AuthRole = "guest" | MembershipTier;
 export type PreferredLanguage = "en" | "ko" | "ja";
+export const SESSION_UPDATED_EVENT = "aipot:session-updated";
 
 interface AuthSnapshot {
   role: AuthRole;
@@ -47,6 +48,11 @@ function canUseStorage() {
   return typeof window !== "undefined" && typeof localStorage !== "undefined";
 }
 
+function notifySessionUpdated() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(SESSION_UPDATED_EVENT));
+}
+
 function normalizeRole(rawRole: string, guest: boolean): AuthRole {
   if (guest || rawRole === "guest") return "guest";
   if (rawRole === "pro") return "pro";
@@ -90,6 +96,7 @@ function writeSession(session: AuthApiResponse) {
 
   localStorage.setItem(ACCESS_TOKEN_KEY, session.accessToken);
   localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
+  notifySessionUpdated();
 }
 
 export function patchSessionUser(patch: Partial<StoredSessionUser>) {
@@ -104,12 +111,14 @@ export function patchSessionUser(patch: Partial<StoredSessionUser>) {
   };
 
   localStorage.setItem(SESSION_USER_KEY, JSON.stringify(next));
+  notifySessionUpdated();
 }
 
 function clearSession() {
   if (!canUseStorage()) return;
   localStorage.removeItem(ACCESS_TOKEN_KEY);
   localStorage.removeItem(SESSION_USER_KEY);
+  notifySessionUpdated();
 }
 
 function parseErrorMessage(payload: unknown): string {

@@ -4,6 +4,7 @@ import { ArrowLeft, MessageCircle, Settings, Users, Info, Trophy, Clock, Coins, 
 import { motion, AnimatePresence } from "motion/react";
 import { getCurrentAuth, getCurrentUserId } from "../auth";
 import { apiFetch } from "../api";
+import { useI18n } from "../i18n";
 
 type Position = number; // Used as seat index
 type Role = "BTN" | "SB" | "BB" | "UTG" | "MP" | "HJ" | "CO" | "UTG+1" | "UTG+2" | "UTG+3" | "UTG+4" | "UTG+5" | "BTN/SB";
@@ -526,6 +527,7 @@ function TimerRing({ isActive, duration = TURN_TIMER_SECONDS, resetToken }: { is
 export function PlayTable() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { t } = useI18n();
   const { isPro } = getCurrentAuth();
   const currentUserId = getCurrentUserId();
   
@@ -593,10 +595,10 @@ export function PlayTable() {
   const canAddBotToRoom = roomMode === "ai_bot";
   const canConvertToPublic = Boolean(isLiveMode && canManageLiveRoom && liveRoom?.isPrivate && !liveRoom?.hasBeenPublic);
   const tableModeLabel = roomMode === "ai_bot"
-    ? "AI Bot Game"
+    ? t("AI Bot Game")
     : roomMode === "cash"
-      ? "Cash Game"
-      : "Game Table";
+      ? t("Cash Game")
+      : t("Game Table");
   const autoContinueBotRoom = Boolean(
     isLiveMode && roomMode === "ai_bot" && liveRoom?.isPrivate,
   );
@@ -1250,7 +1252,7 @@ export function PlayTable() {
       }
       await syncLiveTable();
     } catch (error) {
-      alert(error instanceof Error ? error.message : "요청 처리에 실패했습니다.");
+      alert(error instanceof Error ? error.message : t("Request failed."));
     } finally {
       setLiveBusy(false);
     }
@@ -1265,7 +1267,7 @@ export function PlayTable() {
       await syncLiveTable();
       setLog("Room converted to public. Host controls are now disabled.");
     } catch (error) {
-      alert(error instanceof Error ? error.message : "공개 전환에 실패했습니다.");
+      alert(error instanceof Error ? error.message : t("Failed to convert room to public."));
     } finally {
       setLiveBusy(false);
     }
@@ -1274,19 +1276,19 @@ export function PlayTable() {
   const handleUpdateBlinds = async () => {
     if (!isLiveMode || !liveRoom || !canManageLiveRoom) return;
 
-    const smallInput = window.prompt("Small blind 금액", String(liveRoom.blindSmall));
+    const smallInput = window.prompt(t("Small blind amount"), String(liveRoom.blindSmall));
     if (smallInput === null) return;
     const parsedSmall = Number.parseInt(smallInput, 10);
     if (!Number.isFinite(parsedSmall) || parsedSmall < 1) {
-      alert("Small blind는 1 이상 정수여야 합니다.");
+      alert(t("Small blind must be an integer greater than or equal to 1."));
       return;
     }
 
-    const bigInput = window.prompt("Big blind 금액", String(Math.max(liveRoom.blindBig, parsedSmall)));
+    const bigInput = window.prompt(t("Big blind amount"), String(Math.max(liveRoom.blindBig, parsedSmall)));
     if (bigInput === null) return;
     const parsedBig = Number.parseInt(bigInput, 10);
     if (!Number.isFinite(parsedBig) || parsedBig < parsedSmall) {
-      alert("Big blind는 Small blind 이상 정수여야 합니다.");
+      alert(t("Big blind must be an integer greater than or equal to small blind."));
       return;
     }
 
@@ -1300,9 +1302,9 @@ export function PlayTable() {
         }),
       });
       await syncLiveTable();
-      setLog(`Blinds updated: ${parsedSmall} / ${parsedBig}`);
+      setLog(t("Blinds updated: {small} / {big}", { small: parsedSmall, big: parsedBig }));
     } catch (error) {
-      alert(error instanceof Error ? error.message : "블라인드 수정에 실패했습니다.");
+      alert(error instanceof Error ? error.message : t("Failed to update blinds."));
     } finally {
       setLiveBusy(false);
     }
@@ -1326,7 +1328,7 @@ export function PlayTable() {
       await syncLiveTable();
       setLog("You left your seat.");
     } catch (error) {
-      alert(error instanceof Error ? error.message : "자리 이탈 처리에 실패했습니다.");
+      alert(error instanceof Error ? error.message : t("Failed to leave seat."));
     } finally {
       setLiveBusy(false);
     }
@@ -1343,7 +1345,7 @@ export function PlayTable() {
       await apiFetch(`/rooms/${roomId}/leave-room`, { method: "POST" });
       navigate("/lobby");
     } catch (error) {
-      alert(error instanceof Error ? error.message : "테이블 퇴장 처리에 실패했습니다.");
+      alert(error instanceof Error ? error.message : t("Failed to leave table."));
     } finally {
       setLiveBusy(false);
     }
@@ -1358,7 +1360,7 @@ export function PlayTable() {
           ? Number(amount)
           : Number(raiseAmount);
         if (!Number.isFinite(previewAmount) || previewAmount <= 0) {
-          alert("유효한 레이즈 금액을 입력해 주세요.");
+          alert(t("Enter a valid raise amount."));
           return;
         }
 
@@ -1371,7 +1373,7 @@ export function PlayTable() {
             ? state.maxBetAmount + Math.max(state.minRaiseAmount, liveRoom?.blindBig ?? 0)
             : Math.max(state.minRaiseAmount, liveRoom?.blindBig ?? 1);
           if (previewAmount < minRaiseTo) {
-            alert(`최소 레이즈 금액은 ${minRaiseTo} 입니다.`);
+            alert(t("Minimum raise amount is {amount}.", { amount: minRaiseTo }));
             return;
           }
         }
@@ -1386,13 +1388,13 @@ export function PlayTable() {
           const latest = await apiFetch<LiveGameSnapshot>(`/game/rooms/${roomId}/state`);
           const state = latest.gameState;
           if (!state || heroSeatId === null) {
-            setLog("게임 상태를 동기화 중입니다...");
+            setLog("Syncing game state...");
             await syncLiveTable();
             setPendingHeroAction(false);
             return;
           }
           if (state.currentTurnSeatId !== heroSeatId) {
-            setLog("이미 턴이 넘어갔습니다. 상태를 동기화합니다.");
+            setLog("Turn already passed. Syncing state.");
             await syncLiveTable();
             setPendingHeroAction(false);
             return;
@@ -1411,7 +1413,7 @@ export function PlayTable() {
               ? Number(amount)
               : Number(raiseAmount);
             if (!Number.isFinite(inputAmount) || inputAmount <= 0) {
-              alert("유효한 레이즈 금액을 입력해 주세요.");
+              alert(t("Enter a valid raise amount."));
               setPendingHeroAction(false);
               return;
             }
@@ -1445,7 +1447,7 @@ export function PlayTable() {
           }, 420);
         } catch (error) {
           setPendingHeroAction(false);
-          alert(error instanceof Error ? error.message : "액션 처리에 실패했습니다.");
+          alert(error instanceof Error ? error.message : t("Failed to process action."));
         } finally {
           setLiveBusy(false);
           setActionBusy(false);
@@ -1655,12 +1657,12 @@ export function PlayTable() {
           className="flex items-center gap-2 text-white bg-black/40 hover:bg-black/60 disabled:opacity-50 px-4 py-2 rounded-full font-bold backdrop-blur-md transition border border-white/10 pointer-events-auto"
         >
           <ArrowLeft className="w-5 h-5" />
-          Leave
+          {t("Leave")}
         </button>
 
         <div className="bg-black/60 px-6 py-2 rounded-full border border-cyan-500/30 text-cyan-400 font-mono text-sm tracking-widest backdrop-blur-sm animate-pulse flex items-center gap-2 shadow-lg">
            <Info className="w-4 h-4"/>
-           {log}
+           {t(log)}
         </div>
 
         <div className="flex gap-4 pointer-events-auto">
@@ -1672,7 +1674,7 @@ export function PlayTable() {
               disabled={liveBusy}
               className="px-4 py-2 bg-slate-700/80 hover:bg-slate-600/80 rounded-full text-white font-bold text-sm backdrop-blur-md border border-slate-300/30 transition shadow-lg"
             >
-              Edit Blinds
+              {t("Edit Blinds")}
             </button>
           )}
           {canConvertToPublic && (
@@ -1683,7 +1685,7 @@ export function PlayTable() {
               disabled={liveBusy}
               className="px-4 py-2 bg-cyan-700/80 hover:bg-cyan-600/80 rounded-full text-white font-bold text-sm backdrop-blur-md border border-cyan-300/40 transition shadow-lg"
             >
-              Make Public
+              {t("Make Public")}
             </button>
           )}
           {userState === "playing" && !isTournament && (
@@ -1694,7 +1696,7 @@ export function PlayTable() {
               disabled={liveBusy}
               className="px-4 py-2 bg-orange-600/80 hover:bg-orange-500/80 rounded-full text-white font-bold text-sm backdrop-blur-md border border-orange-400/30 transition shadow-lg"
             >
-              Sit Out
+              {t("Sit Out")}
             </button>
           )}
           <button className="p-2 bg-black/40 hover:bg-black/60 rounded-full text-white backdrop-blur-md border border-white/10 transition">
@@ -1715,15 +1717,15 @@ export function PlayTable() {
               {tourneyStage}
             </div>
             <div className="text-white font-bold text-xs mt-1 border-b border-white/10 pb-1 mb-1">
-              Players Left: <span className="text-cyan-400">{tourneyPlayersLeft}</span> / 100
+              {t("Players Left")}: <span className="text-cyan-400">{tourneyPlayersLeft}</span> / 100
             </div>
-            <div className="text-white font-bold text-sm">Level 4 <span className="text-slate-400 mx-2">•</span> 100 / 200</div>
+            <div className="text-white font-bold text-sm">{t("Level 4")} <span className="text-slate-400 mx-2">•</span> 100 / 200</div>
             <div className="flex items-center gap-1.5 text-cyan-400 font-semibold text-xs mt-1">
               <Clock className="w-3 h-3"/>
-              Blinds up in 04:59
+              {t("Blinds up in 04:59")}
             </div>
             <div className="text-slate-400 font-semibold text-[10px] mt-1 border-t border-white/10 pt-1">
-              Rebuys: 1/2 <span className="opacity-60">(Closes at Lvl 8)</span>
+              {t("Rebuys")}: 1/2 <span className="opacity-60">({t("Closes at Lvl 8")})</span>
             </div>
           </>
         ) : (
@@ -1733,10 +1735,10 @@ export function PlayTable() {
               {tableModeLabel}
             </div>
             <div className="text-white font-bold text-sm mt-1">
-              Blinds: <span className="text-slate-300">{liveRoom ? `${liveRoom.blindSmall} / ${liveRoom.blindBig}` : "-"}</span>
+              {t("Blinds")}: <span className="text-slate-300">{liveRoom ? `${liveRoom.blindSmall} / ${liveRoom.blindBig}` : "-"}</span>
             </div>
             <div className="text-slate-400 font-semibold text-[10px] mt-1 border-t border-white/10 pt-1">
-              {isLiveMode ? "Live room data" : "No limit on rebuys"}
+              {isLiveMode ? t("Live room data") : t("No limit on rebuys")}
             </div>
           </>
         )}
@@ -1773,7 +1775,7 @@ export function PlayTable() {
                 animate={{ scale: 1, opacity: 1 }}
                 className="bg-black/80 px-4 md:px-6 py-1 md:py-1.5 rounded-full border border-cyan-500/50 flex items-center gap-3 shadow-[0_0_20px_rgba(0,255,255,0.2)]"
               >
-                <span className="text-cyan-400 font-bold text-xs md:text-sm">POT</span>
+                <span className="text-cyan-400 font-bold text-xs md:text-sm">{t("Pot")}</span>
                 <span className="text-white font-black text-lg md:text-xl">${pot}</span>
               </motion.div>
             )}
@@ -1822,13 +1824,13 @@ export function PlayTable() {
           >
             {isLiveMode
               ? liveRoom?.status === "HAND_ENDED"
-                ? "Next Hand"
+                ? t("Next Hand")
                 : liveRoom?.status === "WAITING_SETUP" && liveSeatedPlayers < 2
-                  ? "Need 2 Players"
-                  : "Start Game"
+                  ? t("Need 2 Players")
+                  : t("Start Game")
               : gameStarted
-                ? "Deal Hand"
-                : "Start Game"}
+                ? t("Deal Hand")
+                : t("Start Game")}
           </button>
         )}
 
@@ -1867,7 +1869,7 @@ export function PlayTable() {
                className="w-20 h-20 md:w-24 md:h-24 rounded-full border-2 border-dashed border-white/20 bg-black/20 hover:bg-white/10 hover:border-white/50 flex flex-col items-center justify-center transition group shadow-inner"
              >
                <Plus className="w-8 h-8 text-white/30 group-hover:text-white/70 mb-1 transition-colors" />
-               <span className="text-[10px] text-white/40 group-hover:text-white/80 font-bold uppercase tracking-wider transition-colors">Add Bot</span>
+               <span className="text-[10px] text-white/40 group-hover:text-white/80 font-bold uppercase tracking-wider transition-colors">{t("Add Bot")}</span>
              </button>
           </div>
         );
@@ -1982,13 +1984,13 @@ export function PlayTable() {
             
             {p.status === 'folded' && (
               <div className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center text-sm font-black text-white">
-                FOLD
+                {t("Fold")}
               </div>
             )}
             
             {p.id === 'hero' && userState !== 'playing' && (
               <div className="absolute inset-0 bg-black/60 rounded-full flex flex-col items-center justify-center text-center">
-                <span className="text-xs font-black text-white">SITTING OUT</span>
+                <span className="text-xs font-black text-white">{t("SITTING OUT")}</span>
               </div>
             )}
             
@@ -2026,16 +2028,16 @@ export function PlayTable() {
                 className="flex flex-col gap-2 bg-black/80 p-3 md:p-4 rounded-2xl backdrop-blur-md border border-white/10 shadow-2xl"
               >
                 <div className="flex justify-between items-center mb-1">
-                  <span className="text-white font-bold text-sm uppercase tracking-widest">Raise Amount</span>
+                  <span className="text-white font-bold text-sm uppercase tracking-widest">{t("Raise Amount")}</span>
                   <button onClick={() => setIsRaising(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => setRaiseAmount(String(Math.floor(pot / 2)))} className="flex-1 bg-slate-700 hover:bg-slate-600 py-1.5 rounded-lg text-xs font-bold text-white transition">1/2 Pot</button>
-                  <button onClick={() => setRaiseAmount(String(pot))} className="flex-1 bg-slate-700 hover:bg-slate-600 py-1.5 rounded-lg text-xs font-bold text-white transition">Pot</button>
+                  <button onClick={() => setRaiseAmount(String(Math.floor(pot / 2)))} className="flex-1 bg-slate-700 hover:bg-slate-600 py-1.5 rounded-lg text-xs font-bold text-white transition">{t("1/2 Pot")}</button>
+                  <button onClick={() => setRaiseAmount(String(pot))} className="flex-1 bg-slate-700 hover:bg-slate-600 py-1.5 rounded-lg text-xs font-bold text-white transition">{t("Pot")}</button>
                   {phase === "preflop" && (
-                    <button onClick={() => setRaiseAmount(String(pot * 3))} className="flex-1 bg-slate-700 hover:bg-slate-600 py-1.5 rounded-lg text-xs font-bold text-white transition">3-Bet</button>
+                    <button onClick={() => setRaiseAmount(String(pot * 3))} className="flex-1 bg-slate-700 hover:bg-slate-600 py-1.5 rounded-lg text-xs font-bold text-white transition">{t("3-Bet")}</button>
                   )}
-                  <button onClick={() => setRaiseAmount(String(players.find(p=>p.id==='hero')?.chips || 0))} className="flex-1 bg-red-900/80 hover:bg-red-800 py-1.5 rounded-lg text-xs font-bold text-red-200 transition border border-red-500/50">All-In</button>
+                  <button onClick={() => setRaiseAmount(String(players.find(p=>p.id==='hero')?.chips || 0))} className="flex-1 bg-red-900/80 hover:bg-red-800 py-1.5 rounded-lg text-xs font-bold text-red-200 transition border border-red-500/50">{t("All-In")}</button>
                 </div>
                 <div className="flex gap-2 mt-1">
                   <input 
@@ -2050,7 +2052,7 @@ export function PlayTable() {
                     disabled={!raiseAmount || Number(raiseAmount) <= 0 || actionBusy}
                     className="bg-red-500 hover:bg-red-400 disabled:opacity-50 disabled:bg-slate-700 text-white font-black px-6 py-2 rounded-xl shadow-[0_4px_0_#991B1B] active:translate-y-1 active:shadow-none transition uppercase"
                   >
-                    Confirm
+                    {t("Confirm")}
                   </button>
                 </div>
               </motion.div>
@@ -2061,7 +2063,7 @@ export function PlayTable() {
                   disabled={actionBusy}
                   className="bg-slate-700 hover:bg-slate-600 text-white font-bold px-6 py-4 md:px-10 md:py-5 rounded-xl md:rounded-2xl shadow-[0_6px_0_#334155] active:translate-y-2 active:shadow-none transition uppercase tracking-wider text-sm md:text-lg"
                 >
-                  Fold
+                  {t("Fold")}
                 </button>
                 <button 
                   onClick={() => handleHeroAction("call")}
@@ -2070,16 +2072,16 @@ export function PlayTable() {
                 >
                   {isLiveMode
                     ? ((liveGame?.gameState?.minCallAmount ?? 0) > 0
-                      ? `Call ${liveGame?.gameState?.minCallAmount ?? 0}`
-                      : "Check")
-                    : (phase === "preflop" ? "Call 50" : "Check")}
+                      ? `${t("Call")} ${liveGame?.gameState?.minCallAmount ?? 0}`
+                      : t("Check"))
+                    : (phase === "preflop" ? `${t("Call")} 50` : t("Check"))}
                 </button>
                 <button 
                   onClick={() => setIsRaising(true)}
                   disabled={actionBusy}
                   className="bg-red-500 hover:bg-red-400 text-white font-black px-6 py-4 md:px-10 md:py-5 rounded-xl md:rounded-2xl shadow-[0_6px_0_#991B1B] active:translate-y-2 active:shadow-none transition uppercase tracking-wider text-sm md:text-lg"
                 >
-                  Raise
+                  {t("Raise")}
                 </button>
               </motion.div>
             )}
@@ -2094,18 +2096,18 @@ export function PlayTable() {
            {userState === "spectating" && (
              <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="flex flex-col items-center gap-3">
                 <div className="bg-black/60 px-4 py-1.5 rounded-full border border-purple-500/50 text-purple-300 font-bold text-sm tracking-widest uppercase shadow-lg backdrop-blur-sm">
-                  👁️ Spectating Mode
+                  👁️ {t("Spectating Mode")}
                 </div>
                 {!isTournament ? (
                   <button 
                     onClick={() => { setUserState("waiting"); setLog("Added to waitlist. Waiting for next hand..."); }}
                     className="pointer-events-auto bg-gradient-to-b from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 px-8 py-3 rounded-xl font-black text-white shadow-[0_4px_0_#1D4ED8] active:translate-y-1 active:shadow-none transition-all uppercase tracking-wider"
                   >
-                    Sit In (Wait for next hand)
+                    {t("Sit In (Wait for next hand)")}
                   </button>
                 ) : (
                   <div className="bg-black/60 px-6 py-2 rounded-xl font-bold text-white shadow-lg backdrop-blur-sm border border-white/10">
-                    Spectating Tournament
+                    {t("Spectating Tournament")}
                   </div>
                 )}
              </motion.div>
@@ -2119,18 +2121,18 @@ export function PlayTable() {
                   onClick={() => { setUserState("spectating"); setLog("Waitlist cancelled. Spectating."); }}
                   className="pointer-events-auto bg-slate-800 hover:bg-slate-700 px-8 py-3 rounded-xl font-black text-slate-300 border border-slate-600 shadow-lg transition-all uppercase tracking-wider"
                 >
-                  Cancel (Spectate Only)
+                  {t("Cancel (Spectate Only)")}
                 </button>
              </motion.div>
            )}
            {userState === "eliminated" && (
              <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="flex flex-col items-center gap-3">
                 <div className="bg-red-900/80 px-4 py-1.5 rounded-full border border-red-500/50 text-red-300 font-bold text-sm tracking-widest uppercase shadow-lg backdrop-blur-md flex items-center gap-2">
-                  <span>💀</span> Eliminated
+                  <span>💀</span> {t("Eliminated")}
                 </div>
                 <div className="bg-black/80 px-6 py-3 rounded-xl font-black text-white shadow-xl backdrop-blur-md border border-white/10 text-center">
-                  You busted out! <br/>
-                  <span className="text-slate-400 font-bold text-xs uppercase tracking-wider">Now Spectating Tournament</span>
+                  {t("You busted out!")} <br/>
+                  <span className="text-slate-400 font-bold text-xs uppercase tracking-wider">{t("Now Spectating Tournament")}</span>
                 </div>
              </motion.div>
            )}
@@ -2153,11 +2155,11 @@ export function PlayTable() {
           >
             <Trophy className="w-20 h-20 md:w-28 md:h-28 text-yellow-400 mb-6 md:mb-8 animate-bounce drop-shadow-[0_0_30px_rgba(250,204,21,0.6)]" />
             <h2 className="text-4xl md:text-6xl font-black text-white uppercase tracking-widest text-center mb-3 md:mb-4 drop-shadow-xl">
-              Table Breaking
+              {t("Table Breaking")}
             </h2>
             <p className="text-lg md:text-2xl text-cyan-400 font-bold uppercase tracking-wider flex items-center gap-2 md:gap-3 drop-shadow-md">
               <Users className="w-5 h-5 md:w-6 md:h-6"/>
-              Moving to <span className="text-yellow-400 border-b-2 border-yellow-400 pb-0.5 md:pb-1">{nextStageName}</span>...
+              {t("Moving to")} <span className="text-yellow-400 border-b-2 border-yellow-400 pb-0.5 md:pb-1">{nextStageName}</span>...
             </p>
           </motion.div>
         )}
@@ -2175,7 +2177,7 @@ export function PlayTable() {
             >
                <div className="flex justify-between items-center mb-6 border-b border-white/5 pb-4">
                  <h3 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
-                   <Users className="text-cyan-400 w-6 h-6"/> Add Bot
+                   <Users className="text-cyan-400 w-6 h-6"/> {t("Add Bot")}
                  </h3>
                  <button onClick={() => setSelectedSeat(null)} className="text-slate-400 hover:text-white transition">
                    <X className="w-6 h-6" />
@@ -2184,7 +2186,7 @@ export function PlayTable() {
                
                  <div className="flex flex-col gap-4">
                  <div>
-                   <label className="block text-xs font-bold text-slate-400 uppercase mb-2">AI Model</label>
+                   <label className="block text-xs font-bold text-slate-400 uppercase mb-2">{t("AI Model")}</label>
                    <select
                      value={botModelId}
                      onChange={(event) => setBotModelId(event.target.value)}
@@ -2198,16 +2200,16 @@ export function PlayTable() {
                    </select>
                  </div>
                  <div>
-                   <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Play Style</label>
+                   <label className="block text-xs font-bold text-slate-400 uppercase mb-2">{t("Play Style")}</label>
                    <select
                      value={botStyle}
                      onChange={(event) => setBotStyle(event.target.value as BotStyle)}
                      className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition"
                    >
-                     <option value="balanced">Balanced</option>
-                     <option value="aggressive">Aggressive</option>
-                     <option value="tight">Tight</option>
-                     <option value="random">Random</option>
+                     <option value="balanced">{t("Balanced")}</option>
+                     <option value="aggressive">{t("Aggressive")}</option>
+                     <option value="tight">{t("Tight")}</option>
+                     <option value="random">{t("Random")}</option>
                    </select>
                  </div>
                  <button 
@@ -2215,7 +2217,7 @@ export function PlayTable() {
                      const addBot = async () => {
                        const selectedModel = BOT_MODEL_OPTIONS.find((option) => option.id === botModelId) ?? BOT_MODEL_OPTIONS[0];
                        if (selectedModel.proOnly && !isPro) {
-                         alert("PRO 전용 AI 모델입니다.");
+                         alert(t("This AI model is available for PRO only."));
                          return;
                        }
                        if (selectedSeat === null) return;
@@ -2235,7 +2237,7 @@ export function PlayTable() {
                            setSelectedSeat(null);
                            await syncLiveTable();
                          } catch (error) {
-                           alert(error instanceof Error ? error.message : "봇 추가에 실패했습니다.");
+                           alert(error instanceof Error ? error.message : t("Failed to add bot."));
                          } finally {
                            setLiveBusy(false);
                          }
@@ -2264,7 +2266,7 @@ export function PlayTable() {
                    }}
                    className="mt-4 w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black py-4 rounded-xl transition shadow-lg flex items-center justify-center gap-2 uppercase tracking-wider"
                  >
-                   <Plus className="w-5 h-5"/> Add Bot
+                   <Plus className="w-5 h-5"/> {t("Add Bot")}
                  </button>
                </div>
             </motion.div>

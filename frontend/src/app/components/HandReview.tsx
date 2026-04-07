@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { apiFetch } from "../api";
 import { getCurrentAuth, getCurrentPreferredLanguage, getCurrentUserId } from "../auth";
+import { useI18n } from "../i18n";
 
 // --- MOCK DATA ---
 interface ActionStep {
@@ -323,6 +324,7 @@ const ANALYSIS_MODELS: Record<AnalysisProvider, Array<{ label: string; value: st
 
 export function HandReview() {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const { isLoggedIn, isPro } = getCurrentAuth();
   const preferredLanguage = getCurrentPreferredLanguage();
   const viewerUserId = getCurrentUserId();
@@ -360,7 +362,7 @@ export function HandReview() {
         setErrorMessage("");
       } catch (error) {
         setHands([]);
-        setErrorMessage(error instanceof Error ? error.message : "Failed to load hand history.");
+        setErrorMessage(error instanceof Error ? error.message : t("Failed to load hand history."));
       } finally {
         setLoading(false);
       }
@@ -415,7 +417,7 @@ export function HandReview() {
           : prev,
       );
     } catch (error) {
-      alert(error instanceof Error ? error.message : "즐겨찾기 저장에 실패했습니다.");
+      alert(error instanceof Error ? error.message : t("Failed to save favorites."));
     }
   };
 
@@ -480,7 +482,7 @@ export function HandReview() {
 
       setAnalysisSummary(response.summary?.trim() ?? "");
     } catch (error) {
-      setAnalysisError(error instanceof Error ? error.message : "핸드 분석에 실패했습니다.");
+      setAnalysisError(error instanceof Error ? error.message : t("Failed to analyze hand."));
     } finally {
       setHandAnalyzeBusy(false);
     }
@@ -495,27 +497,29 @@ export function HandReview() {
             onClick={() => navigate("/lobby")}
             className="flex items-center gap-2 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 px-4 py-2 rounded-full font-bold transition"
           >
-            <ArrowLeft className="w-5 h-5" /> Back to Lobby
+            <ArrowLeft className="w-5 h-5" /> {t("Back to Lobby")}
           </button>
         </header>
         <div className="flex-1 flex items-center justify-center p-6 z-10">
           <div className="max-w-xl w-full rounded-2xl border border-orange-500/40 bg-orange-500/10 p-6 text-center">
-            <h2 className="text-2xl font-black text-white mb-2">Hand Review is PRO Only</h2>
+            <h2 className="text-2xl font-black text-white mb-2">{t("Hand Review is PRO Only")}</h2>
             <p className="text-slate-300 font-semibold mb-6">
-              {isLoggedIn ? "핸드 리플레이와 분석은 PRO 구독에서만 사용할 수 있습니다." : "로그인 후 PRO 구독이 필요합니다."}
+              {isLoggedIn
+                ? t("Hand replay and analysis are available for PRO members only.")
+                : t("Sign in and subscribe to PRO to use Hand Review.")}
             </p>
             <div className="flex justify-center gap-3">
               <button
                 onClick={() => navigate("/store")}
                 className="bg-orange-500 hover:bg-orange-400 text-white font-black px-5 py-2.5 rounded-xl"
               >
-                Go to Store
+                {t("Go to Store")}
               </button>
               <button
                 onClick={() => navigate("/lobby")}
                 className="bg-slate-700 hover:bg-slate-600 text-white font-black px-5 py-2.5 rounded-xl"
               >
-                Back
+                {t("Back")}
               </button>
             </div>
           </div>
@@ -562,11 +566,11 @@ export function HandReview() {
             onClick={() => navigate("/lobby")}
             className="flex items-center gap-2 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 px-4 py-2 rounded-full font-bold transition"
           >
-            <ArrowLeft className="w-5 h-5" /> Back to Lobby
+            <ArrowLeft className="w-5 h-5" /> {t("Back to Lobby")}
           </button>
           <div className="mx-auto flex items-center gap-3">
             <History className="w-6 h-6 text-orange-400" />
-            <h1 className="text-2xl font-black tracking-wider uppercase">Hand History</h1>
+            <h1 className="text-2xl font-black tracking-wider uppercase">{t("Hand History")}</h1>
           </div>
           <div className="w-32"></div> {/* Spacer */}
         </header>
@@ -574,23 +578,23 @@ export function HandReview() {
         <div className="flex-1 overflow-y-auto p-4 md:p-8 z-10">
           <div className="max-w-3xl mx-auto flex flex-col gap-4">
             <div className="flex items-center justify-between mb-1">
-              <p className="text-slate-400 font-bold">Select a hand to review play-by-play.</p>
+              <p className="text-slate-400 font-bold">{t("Select a hand to review play-by-play.")}</p>
               <div className="flex gap-2">
                 <button
                   onClick={() => setHistoryFilter("all")}
                   className={`px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-wider border transition ${historyFilter === "all" ? "bg-cyan-500/20 text-cyan-300 border-cyan-400/50" : "bg-white/5 text-slate-400 border-white/10 hover:text-white"}`}
                 >
-                  All
+                  {t("All")}
                 </button>
                 <button
                   onClick={() => setHistoryFilter("favorites")}
                   className={`px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-wider border transition ${historyFilter === "favorites" ? "bg-yellow-500/20 text-yellow-300 border-yellow-400/50" : "bg-white/5 text-slate-400 border-white/10 hover:text-white"}`}
                 >
-                  Favorites
+                  {t("Favorites")}
                 </button>
               </div>
             </div>
-            {loading && <p className="text-slate-300 font-semibold">Loading hands...</p>}
+            {loading && <p className="text-slate-300 font-semibold">{t("Loading hands...")}</p>}
             {!loading && errorMessage && (
               <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-300 font-semibold">
                 {errorMessage}
@@ -599,8 +603,8 @@ export function HandReview() {
             {!loading && !errorMessage && visibleHands.length === 0 && (
               <div className="rounded-xl border border-white/10 bg-[#242754] p-5 text-slate-300 font-semibold">
                 {historyFilter === "favorites"
-                  ? "No favorite hands yet."
-                  : "No hands yet. Play a game first and come back for review."}
+                  ? t("No favorite hands yet.")
+                  : t("No hands yet. Play a game first and come back for review.")}
               </div>
             )}
             
@@ -618,7 +622,7 @@ export function HandReview() {
                       void toggleFavorite(hand.id, !hand.favorite);
                     }}
                     className={`absolute right-4 top-4 rounded-full p-2 border transition ${hand.favorite ? "bg-yellow-500/20 border-yellow-400/50 text-yellow-300" : "bg-white/5 border-white/10 text-slate-400 hover:text-white"}`}
-                    title={hand.favorite ? "Remove from favorites" : "Add to favorites"}
+                    title={hand.favorite ? t("Remove from favorites") : t("Add to favorites")}
                   >
                     <Star className={`w-4 h-4 ${hand.favorite ? "fill-yellow-300" : ""}`} />
                   </button>
@@ -632,7 +636,7 @@ export function HandReview() {
                     <div className="flex items-center gap-2 mt-1">
                       <div className="flex gap-1">
                         {finalStep.heroCards.length === 0 && (
-                          <span className="text-xs font-bold text-slate-500">Cards Hidden</span>
+                          <span className="text-xs font-bold text-slate-500">{t("Cards Hidden")}</span>
                         )}
                         {finalStep.heroCards.map((c, i) => (
                           <div key={i} className={`w-6 h-8 bg-white rounded flex items-center justify-center text-xs font-black border border-slate-300 ${c.includes('♥') || c.includes('♦') ? 'text-red-600' : 'text-slate-900'}`}>{c}</div>
@@ -643,7 +647,7 @@ export function HandReview() {
 
                   <div className="mt-4 md:mt-0 flex items-center justify-between md:justify-end md:gap-6 border-t md:border-t-0 border-white/5 pt-4 md:pt-0">
                     <div className="flex flex-col items-end">
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Net Result</span>
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{t("Net Result")}</span>
                       <span className={`text-xl font-black ${hand.net > 0 ? 'text-green-400' : hand.net < 0 ? 'text-red-400' : 'text-slate-300'}`}>
                         {hand.net > 0 ? '+' : hand.net < 0 ? '-' : ''}${Math.abs(hand.net).toLocaleString()}
                       </span>
@@ -679,7 +683,7 @@ export function HandReview() {
           onClick={() => setSelectedHand(null)}
           className="flex items-center gap-2 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 px-4 py-2 rounded-full font-bold transition"
         >
-          <ArrowLeft className="w-5 h-5" /> Back to List
+          <ArrowLeft className="w-5 h-5" /> {t("Back to List")}
         </button>
         <div className="flex items-center gap-3">
           <button
@@ -687,7 +691,7 @@ export function HandReview() {
               void toggleFavorite(selectedHand.id, !selectedHand.favorite);
             }}
             className={`rounded-full p-2 border transition ${selectedHand.favorite ? "bg-yellow-500/20 border-yellow-400/50 text-yellow-300" : "bg-white/5 border-white/10 text-slate-400 hover:text-white"}`}
-            title={selectedHand.favorite ? "Remove from favorites" : "Add to favorites"}
+            title={selectedHand.favorite ? t("Remove from favorites") : t("Add to favorites")}
           >
             <Star className={`w-4 h-4 ${selectedHand.favorite ? "fill-yellow-300" : ""}`} />
           </button>
@@ -697,7 +701,7 @@ export function HandReview() {
             onChange={(event) => setAnalysisProvider(event.target.value as AnalysisProvider)}
             className="bg-[#11122D] border border-white/10 rounded-lg px-2 py-1 text-xs font-bold text-slate-200"
           >
-            <option value="local">Local</option>
+            <option value="local">{t("Local")}</option>
             <option value="openai">OpenAI</option>
             <option value="claude">Claude</option>
             <option value="gemini">Gemini</option>
@@ -719,10 +723,10 @@ export function HandReview() {
             className="px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider border border-orange-500/40 bg-orange-500/20 text-orange-300 hover:bg-orange-500/30 disabled:opacity-60 flex items-center gap-1"
           >
             <BrainCircuit className="w-3 h-3" />
-            {handAnalyzeBusy ? "Analyzing" : "Analyze Hand"}
+            {handAnalyzeBusy ? t("Analyzing") : t("Analyze Hand")}
           </button>
           <div className="bg-orange-500/20 text-orange-400 px-3 py-1 rounded-full font-mono text-xs font-bold border border-orange-500/30 flex items-center gap-2 uppercase tracking-wider">
-            <Target className="w-3 h-3" /> Step Analysis
+            <Target className="w-3 h-3" /> {t("Step Analysis")}
           </div>
         </div>
       </header>
@@ -763,7 +767,7 @@ export function HandReview() {
            <div className="w-full max-w-[450px] h-[200px] md:h-[260px] bg-[#2E3C98] rounded-full border-[12px] border-[#1D2660] shadow-[inset_0_-5px_30px_rgba(0,0,0,0.5)] flex flex-col items-center justify-center relative mt-8 md:mt-0">
               
               <div className="absolute -top-6 bg-cyan-950/80 px-6 py-2 rounded-full border border-cyan-500/50 flex flex-col items-center shadow-xl backdrop-blur-sm z-10">
-                <span className="text-cyan-400 font-black text-[10px] uppercase tracking-widest">Total Pot</span>
+                <span className="text-cyan-400 font-black text-[10px] uppercase tracking-widest">{t("Total Pot")}</span>
                 <span className="text-white font-black text-xl">${currentStep.pot.toLocaleString()}</span>
               </div>
               
@@ -781,7 +785,7 @@ export function HandReview() {
                     </motion.div>
                   ))}
                   {currentStep.board.length === 0 && (
-                    <span className="text-white/20 font-bold uppercase tracking-widest text-sm">Pre-Flop</span>
+                    <span className="text-white/20 font-bold uppercase tracking-widest text-sm">{t("Pre-Flop")}</span>
                   )}
                 </AnimatePresence>
               </div>
@@ -789,7 +793,7 @@ export function HandReview() {
               {/* Win Probability Bar (Hero) */}
               <div className="absolute -bottom-5 flex flex-col items-center w-full max-w-[200px] md:max-w-[250px] z-10 bg-black/60 px-4 py-1.5 rounded-full border border-white/10 backdrop-blur-sm shadow-xl">
                  <div className="flex justify-between w-full text-[9px] md:text-[10px] uppercase tracking-widest font-bold mb-1">
-                   <span className="text-cyan-400">Win Prob</span>
+                   <span className="text-cyan-400">{t("Win Prob")}</span>
                    <span className="text-slate-400">{currentStep.heroEquity}%</span>
                  </div>
                  <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
@@ -818,7 +822,7 @@ export function HandReview() {
                     </motion.div>
                  ))}
               </div>
-              <span className="bg-cyan-500/20 text-cyan-400 px-4 py-1.5 rounded-full text-xs font-bold border border-cyan-500/30 uppercase tracking-wider">Hero (You)</span>
+              <span className="bg-cyan-500/20 text-cyan-400 px-4 py-1.5 rounded-full text-xs font-bold border border-cyan-500/30 uppercase tracking-wider">{t("Hero (You)")}</span>
            </div>
         </div>
 
@@ -828,7 +832,7 @@ export function HandReview() {
            {/* Top: Action Log (Scrollable) */}
            <div className="h-1/3 min-h-[200px] border-b border-white/5 flex flex-col">
              <div className="px-4 py-3 bg-[#1A1C3E] border-b border-white/5 shadow-md z-20 shrink-0">
-               <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest">Play-by-Play Action Log</h3>
+               <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest">{t("Play-by-Play Action Log")}</h3>
              </div>
              <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-[#161836]" ref={logRef}>
                <div className="flex flex-col gap-2">
@@ -880,7 +884,7 @@ export function HandReview() {
                     {currentStep.evScore > 0 ? <CheckCircle2 className="w-6 h-6 text-green-400 shrink-0"/> : currentStep.evScore < 0 ? <XCircle className="w-6 h-6 text-red-400 shrink-0"/> : <Target className="w-6 h-6 text-slate-400 shrink-0"/>}
                     <div>
                       <h4 className="font-bold mb-1 text-white flex items-center gap-2">
-                        Step Analysis
+                        {t("Step Analysis")}
                         {currentStep.evScore !== 0 && (
                            <span className={`text-xs px-2 py-0.5 rounded-full ${currentStep.evScore > 0 ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>
                              {currentStep.evScore > 0 ? '+' : ''}{currentStep.evScore} EV
@@ -901,14 +905,14 @@ export function HandReview() {
                   <div className="bg-[#242754] p-4 md:p-5 rounded-2xl border border-white/5 shadow-lg flex flex-col items-center relative">
                      {isShowdown && (
                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm rounded-2xl flex flex-col items-center justify-center z-20">
-                          <span className="text-2xl font-black text-white uppercase tracking-widest">Hand Over</span>
+                          <span className="text-2xl font-black text-white uppercase tracking-widest">{t("Hand Over")}</span>
                           <span className="text-sm text-slate-300 mt-2 font-bold">{currentStep.desc}</span>
                        </div>
                      )}
                      
                      <div className="flex justify-between w-full mb-4 items-end">
-                       <h4 className="font-black text-slate-300 uppercase tracking-wider text-xs md:text-sm">Opponent Range Estimate</h4>
-                       <span className="text-[10px] md:text-xs font-bold text-orange-400 bg-orange-500/10 px-2 py-1 rounded">Live updating...</span>
+                       <h4 className="font-black text-slate-300 uppercase tracking-wider text-xs md:text-sm">{t("Opponent Range Estimate")}</h4>
+                       <span className="text-[10px] md:text-xs font-bold text-orange-400 bg-orange-500/10 px-2 py-1 rounded">{t("Live updating...")}</span>
                      </div>
                      
                      <div className="grid grid-cols-13 gap-[1px] md:gap-[2px] bg-slate-800 p-1 md:p-1.5 rounded-lg border border-white/10 w-full max-w-[320px] aspect-square" style={{ gridTemplateColumns: 'repeat(13, minmax(0, 1fr))'}}>
@@ -936,11 +940,11 @@ export function HandReview() {
                      </div>
                      
                      <div className="flex flex-wrap gap-3 md:gap-5 mt-4 text-[9px] md:text-xs font-bold text-slate-400 w-full justify-center">
-                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-red-500 rounded-sm shadow-sm"></div> All-in</div>
-                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-orange-500 rounded-sm shadow-sm"></div> Raise</div>
-                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-blue-500 rounded-sm shadow-sm"></div> Call/Check</div>
-                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-gradient-to-br from-orange-500 to-blue-500 rounded-sm shadow-sm"></div> Mixed</div>
-                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-slate-800 border border-slate-600 rounded-sm"></div> Fold</div>
+                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-red-500 rounded-sm shadow-sm"></div> {t("All-in")}</div>
+                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-orange-500 rounded-sm shadow-sm"></div> {t("Raise")}</div>
+                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-blue-500 rounded-sm shadow-sm"></div> {t("Call/Check")}</div>
+                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-gradient-to-br from-orange-500 to-blue-500 rounded-sm shadow-sm"></div> {t("Mixed")}</div>
+                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-slate-800 border border-slate-600 rounded-sm"></div> {t("Fold")}</div>
                      </div>
                   </div>
                 </motion.div>
@@ -961,7 +965,7 @@ export function HandReview() {
                onClick={() => setIsPlaying(!isPlaying)}
                className={`flex items-center gap-2 px-6 py-3 rounded-full font-black text-sm uppercase tracking-wider transition-all shadow-lg ${isPlaying ? 'bg-red-500/20 text-red-400 border border-red-500/50 hover:bg-red-500/30' : 'bg-orange-500 text-white hover:bg-orange-400 shadow-[0_4px_0_#C2410C] active:translate-y-1 active:shadow-none'}`}
              >
-               {isPlaying ? <><PauseCircle className="w-5 h-5"/> Pause</> : <><PlayCircle className="w-5 h-5"/> Auto Play</>}
+               {isPlaying ? <><PauseCircle className="w-5 h-5"/> {t("Pause")}</> : <><PlayCircle className="w-5 h-5"/> {t("Auto Play")}</>}
              </button>
 
              <button 

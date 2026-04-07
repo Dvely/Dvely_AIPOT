@@ -13,6 +13,7 @@ import {
   signOut,
 } from "../auth";
 import { apiFetch } from "../api";
+import { useI18n } from "../i18n";
 
 type LobbyRoomType = "ai_bot" | "cash" | "tournament";
 
@@ -209,6 +210,7 @@ function toLobbyTable(summary: LobbyTableSummary): LobbyTableItem {
 
 export function Lobby() {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState("QUICK PLAY");
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [passwordModalTable, setPasswordModalTable] = useState<any | null>(null);
@@ -284,7 +286,7 @@ export function Lobby() {
       setProfileError(
         error instanceof Error
           ? error.message
-          : "프로필 정보를 불러오지 못했습니다.",
+          : t("Failed to load profile information."),
       );
     } finally {
       setProfileLoading(false);
@@ -312,7 +314,7 @@ export function Lobby() {
       await loadProfile();
       setProfileTab("stats");
     } catch (error) {
-      alert(error instanceof Error ? error.message : "아바타 저장에 실패했습니다.");
+      alert(error instanceof Error ? error.message : t("Failed to save avatar."));
     } finally {
       setProfileBusy(false);
     }
@@ -322,12 +324,12 @@ export function Lobby() {
     if (!isLoggedIn) return;
 
     if (!passwordForm.currentPassword || !passwordForm.newPassword) {
-      alert("현재 비밀번호와 새 비밀번호를 입력해 주세요.");
+      alert(t("Enter current and new password."));
       return;
     }
 
     if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      alert("새 비밀번호 확인이 일치하지 않습니다.");
+      alert(t("Password confirmation does not match."));
       return;
     }
 
@@ -347,9 +349,9 @@ export function Lobby() {
         confirmPassword: "",
       });
       setProfileTab("stats");
-      alert("비밀번호가 변경되었습니다.");
+      alert(t("Password has been updated."));
     } catch (error) {
-      alert(error instanceof Error ? error.message : "비밀번호 변경에 실패했습니다.");
+      alert(error instanceof Error ? error.message : t("Failed to update password."));
     } finally {
       setProfileBusy(false);
     }
@@ -382,7 +384,7 @@ export function Lobby() {
       );
       setShowSettingsModal(false);
     } catch (error) {
-      alert(error instanceof Error ? error.message : "설정 저장에 실패했습니다.");
+      alert(error instanceof Error ? error.message : t("Failed to save settings."));
     } finally {
       setSettingsBusy(false);
     }
@@ -445,39 +447,39 @@ export function Lobby() {
   const gameModes = [
     {
       id: "ai-bot",
-      title: "AI Bot Training",
+      title: t("AI Bot Training"),
       icon: <Swords className="w-8 h-8 text-white" />,
       color: "from-blue-500 to-cyan-500",
-      description: "Practice against AI opponents",
+      description: t("Practice against AI opponents"),
     },
     {
       id: "cash-game",
-      title: "Cash Game",
+      title: t("Cash Game"),
       icon: <Coins className="w-8 h-8 text-white" />,
       color: "from-green-500 to-emerald-500",
-      description: "Join public cash tables",
+      description: t("Join public cash tables"),
     },
     {
       id: "tournament",
-      title: "Tournament",
+      title: t("Tournament"),
       icon: <Crown className="w-8 h-8 text-white" />,
       color: "from-purple-500 to-fuchsia-500",
-      description: "Compete for the top prize",
+      description: t("Compete for the top prize"),
       locked: !isLoggedIn,
     },
     {
       id: "review",
-      title: "Hand Review",
+      title: t("Hand Review"),
       icon: <BookOpen className="w-8 h-8 text-white" />,
       color: "from-orange-500 to-amber-500",
-      description: "Analyze your past games",
+      description: t("Analyze your past games"),
       locked: !isPro,
     },
   ];
 
   const handleTableClick = async (table: LobbyTableItem) => {
     if (table.type === "tournament" && !isLoggedIn) {
-      alert("Guest cannot enter tournaments. Please sign in with your account.");
+      alert(t("Guest cannot enter tournaments."));
       return;
     }
 
@@ -504,7 +506,7 @@ export function Lobby() {
           allowStartControl: false,
         });
       } catch (error) {
-        alert(error instanceof Error ? error.message : "테이블 입장에 실패했습니다.");
+        alert(error instanceof Error ? error.message : t("Failed to join table."));
       }
     }
   };
@@ -512,7 +514,7 @@ export function Lobby() {
   const handleGameModeClick = async (id: string) => {
     if (id === "review") {
       if (!isPro) {
-        alert("Hand Review is available for PRO members only.");
+        alert(t("Hand Review is available for PRO members only."));
         return;
       }
       navigate("/review");
@@ -520,7 +522,7 @@ export function Lobby() {
     }
 
     if (id === "tournament" && !isLoggedIn) {
-      alert("Guest cannot play tournaments.");
+      alert(t("Guest cannot play tournaments."));
       return;
     }
 
@@ -537,7 +539,7 @@ export function Lobby() {
       );
 
       if (!result.matched || !result.roomId) {
-        alert(result.reason ?? "매칭 가능한 룸이 없습니다.");
+        alert(result.reason ?? t("No matching room available."));
         return;
       }
 
@@ -546,7 +548,7 @@ export function Lobby() {
         allowStartControl: false,
       });
     } catch (error) {
-      alert(error instanceof Error ? error.message : "퀵플레이 연결에 실패했습니다.");
+      alert(error instanceof Error ? error.message : t("Failed to connect quick play."));
     }
   };
 
@@ -586,7 +588,7 @@ export function Lobby() {
             className="hidden md:flex items-center gap-2 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded-full font-bold shadow-inner border border-indigo-400/30 transition"
           >
             <Target className="w-4 h-4 text-cyan-300" />
-            <span>Daily Missions</span>
+            <span>{t("Daily Missions")}</span>
           </button>
         </div>
 
@@ -619,12 +621,12 @@ export function Lobby() {
         {/* Left Sidebar */}
         <aside className="w-64 flex flex-col gap-4 shrink-0 hidden md:flex">
           <div className="bg-[#242754] rounded-2xl p-4 flex flex-col gap-3 border border-white/5 shadow-xl">
-            <h2 className="text-center font-bold text-slate-300 text-sm tracking-widest mb-2">CUSTOMIZE</h2>
+            <h2 className="text-center font-bold text-slate-300 text-sm tracking-widest mb-2">{t("Customize")}</h2>
             
             <button 
               onClick={() => {
                 if (!isLoggedIn) {
-                  alert("Guest cannot create tables.");
+                  alert(t("Guest cannot create tables."));
                   return;
                 }
                 setShowCreateModal(true);
@@ -632,10 +634,10 @@ export function Lobby() {
               className={`w-full font-black py-4 rounded-xl transition-all flex justify-center items-center gap-2 uppercase ${!isLoggedIn ? 'bg-slate-700 text-slate-400 shadow-[0_4px_0_#334155] opacity-80' : 'bg-gradient-to-b from-yellow-400 to-orange-500 text-white shadow-[0_4px_0_#B45309] hover:translate-y-1 hover:shadow-[0_0px_0_#B45309]'}`}
             >
               {!isLoggedIn ? <Lock className="w-5 h-5" /> : <Users className="w-5 h-5" />}
-              Create Table
+              {t("Create Table")}
             </button>
             <p className="text-xs text-center text-slate-400 font-medium px-2 mt-2">
-              Create a custom table and invite friends to play securely.
+              {t("Create a custom table and invite friends to play securely.")}
             </p>
           </div>
 
@@ -644,16 +646,16 @@ export function Lobby() {
             className="mt-auto bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl p-4 shadow-lg border border-white/10 relative overflow-hidden group cursor-pointer"
           >
              <div className="absolute -right-4 -top-4 w-24 h-24 bg-white/20 rounded-full blur-xl group-hover:scale-150 transition-transform"></div>
-             <p className="text-xs font-bold text-cyan-300 uppercase mb-1">PRO BUNDLE</p>
-             <h3 className="font-black text-lg leading-tight">Get 2x Chips & Ad-free</h3>
-             <button className="mt-3 bg-white text-indigo-900 font-bold px-4 py-1.5 rounded-full text-sm hover:bg-slate-200 w-full transition shadow-md">Store</button>
+             <p className="text-xs font-bold text-cyan-300 uppercase mb-1">{t("PRO Bundle")}</p>
+             <h3 className="font-black text-lg leading-tight">{t("Get 2x Chips & Ad-free")}</h3>
+             <button className="mt-3 bg-white text-indigo-900 font-bold px-4 py-1.5 rounded-full text-sm hover:bg-slate-200 w-full transition shadow-md">{t("Store")}</button>
           </div>
         </aside>
 
         {/* Center Panel */}
         <main className="flex-1 bg-[#242754] rounded-2xl border border-white/5 shadow-xl flex flex-col overflow-hidden relative">
           <div className="flex bg-[#1A1C3E] border-b border-white/10 shrink-0 overflow-x-auto no-scrollbar">
-            {["QUICK PLAY", "TABLES", "LEADERBOARD", "QUESTS"].map((tab) => (
+            {[("QUICK PLAY"), ("TABLES"), ("LEADERBOARD"), ("QUESTS")].map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -663,7 +665,13 @@ export function Lobby() {
                     : "text-slate-400 hover:text-white"
                 }`}
               >
-                {tab}
+                {tab === "QUICK PLAY"
+                  ? t("Quick Play")
+                  : tab === "TABLES"
+                    ? t("Tables")
+                    : tab === "LEADERBOARD"
+                      ? t("Leaderboard")
+                      : t("Quests")}
               </button>
             ))}
           </div>
@@ -682,7 +690,7 @@ export function Lobby() {
                     whileTap={{ scale: (mode as any).locked ? 1 : 0.98 }}
                     onClick={() => {
                       if ((mode as any).locked) {
-                        alert("Guest cannot use this feature.");
+                        alert(t("Guest cannot use this feature."));
                         return;
                       }
                       handleGameModeClick(mode.id);
@@ -696,7 +704,7 @@ export function Lobby() {
                       <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-20 backdrop-blur-sm">
                         <div className="flex flex-col items-center gap-2">
                           <Lock className="w-8 h-8 text-white" />
-                          <span className="text-white font-bold text-sm tracking-wider uppercase">Pro Only</span>
+                          <span className="text-white font-bold text-sm tracking-wider uppercase">{t("PRO Only")}</span>
                         </div>
                       </div>
                     )}
@@ -713,7 +721,7 @@ export function Lobby() {
                 {tournaments.length > 0 && (
                   <div className="flex flex-col gap-3">
                     <h2 className="text-xl font-black text-white flex items-center gap-2">
-                      <Trophy className="text-yellow-400" /> Live Tournaments
+                      <Trophy className="text-yellow-400" /> {t("Live Tournaments")}
                     </h2>
                     {tournaments.map((table, idx) => (
                       <motion.div 
@@ -749,7 +757,7 @@ export function Lobby() {
                           </div>
                           <div className="flex items-center gap-4">
                             <div className="flex flex-col items-end">
-                              <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Entries</span>
+                              <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">{t("Entries")}</span>
                               <div className="flex items-center gap-1.5 font-mono text-sm font-bold text-white">
                                 <Users className="w-4 h-4 text-slate-400"/>
                                 {table.players}/{table.max}
@@ -760,27 +768,27 @@ export function Lobby() {
                                  onClick={(e) => { 
                                    e.stopPropagation(); 
                                    if (!isLoggedIn) {
-                                     alert("Guest cannot watch tournaments.");
+                                     alert(t("Guest cannot watch tournaments."));
                                      return;
                                    }
                                    setSpectateTournamentModal(table); 
                                  }}
                                  className={`px-6 py-2 rounded-lg font-black uppercase tracking-wider text-sm shadow-md transition ${!isLoggedIn ? 'bg-slate-700 text-slate-500 opacity-70 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-500 text-white hover:shadow-[0_0_15px_rgba(147,51,234,0.5)]'}`}
                                >
-                                 {!isLoggedIn ? <Lock className="w-4 h-4 mx-auto" /> : "Watch"}
+                                {!isLoggedIn ? <Lock className="w-4 h-4 mx-auto" /> : t("Watch")}
                                </button>
                                <button 
                                  onClick={(e) => { 
                                    e.stopPropagation(); 
                                    if (!isLoggedIn) {
-                                     alert("Guest cannot enter tournaments.");
+                                     alert(t("Guest cannot enter tournaments."));
                                      return;
                                    }
                                    handleTableClick(table); 
                                  }}
                                  className={`px-6 py-2 rounded-lg font-black uppercase tracking-wider text-sm shadow-md transition ${!isLoggedIn ? 'bg-slate-700 text-slate-500 opacity-70 cursor-not-allowed' : 'bg-gradient-to-b from-yellow-400 to-orange-500 text-white hover:shadow-[0_0_15px_rgba(250,204,21,0.5)]'}`}
                                >
-                                 {!isLoggedIn ? <Lock className="w-4 h-4 mx-auto" /> : "Enter"}
+                                {!isLoggedIn ? <Lock className="w-4 h-4 mx-auto" /> : t("Enter")}
                                </button>
                             </div>
                           </div>
@@ -792,7 +800,7 @@ export function Lobby() {
 
                 <div className="flex flex-col gap-3 mt-6">
                   <div className="flex justify-between items-center mb-1">
-                    <h2 className="text-xl font-black text-white flex items-center gap-2"><Target className="text-cyan-400 w-5 h-5"/> AI Bot Games</h2>
+                    <h2 className="text-xl font-black text-white flex items-center gap-2"><Target className="text-cyan-400 w-5 h-5"/>{t("AI Bot Games")}</h2>
                   </div>
                   {botGames.map((table, idx) => (
                       <motion.div 
@@ -807,7 +815,7 @@ export function Lobby() {
                          <div className="flex items-center gap-2">
                            <span className="font-bold text-lg text-cyan-50">{table.name}</span>
                          </div>
-                         <span className="text-sm font-semibold text-slate-400">Blinds: {table.stakes}</span>
+                         <span className="text-sm font-semibold text-slate-400">{t("Blinds")}: {table.stakes}</span>
                       </div>
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-1.5 bg-black/40 px-3 py-1 rounded-full border border-white/5">
@@ -818,7 +826,7 @@ export function Lobby() {
                           onClick={(e) => { e.stopPropagation(); handleTableClick(table); }}
                           className="hidden md:block px-6 py-2 rounded-lg font-bold uppercase tracking-wider text-sm shadow-md transition bg-cyan-600 hover:bg-cyan-500 text-white group-hover:shadow-[0_0_15px_rgba(6,182,212,0.6)]"
                         >
-                          Practice
+                          {t("Practice")}
                         </button>
                       </div>
                     </motion.div>
@@ -827,14 +835,14 @@ export function Lobby() {
 
                 <div className="flex flex-col gap-3 mt-4">
                   <div className="flex justify-between items-center mb-1">
-                    <h2 className="text-xl font-black text-white flex items-center gap-2"><Coins className="text-green-400 w-5 h-5"/> Cash Games</h2>
+                    <h2 className="text-xl font-black text-white flex items-center gap-2"><Coins className="text-green-400 w-5 h-5"/> {t("Cash Games")}</h2>
                     <button
                       onClick={() => {
                         void loadTables();
                       }}
                       className="text-cyan-400 text-sm font-bold hover:text-cyan-300"
                     >
-                      {tableLoading ? "Loading..." : "Refresh"}
+                      {tableLoading ? t("Loading...") : t("Refresh")}
                     </button>
                   </div>
                   
@@ -852,7 +860,7 @@ export function Lobby() {
                            {table.isPrivate ? <Lock className="w-4 h-4 text-red-400" /> : <Unlock className="w-4 h-4 text-green-400" />}
                            <span className="font-bold text-lg">{table.name}</span>
                          </div>
-                         <span className="text-sm font-semibold text-slate-400">Blinds: {table.stakes}</span>
+                         <span className="text-sm font-semibold text-slate-400">{t("Blinds")}: {table.stakes}</span>
                       </div>
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-1.5 bg-black/40 px-3 py-1 rounded-full border border-white/5">
@@ -863,7 +871,7 @@ export function Lobby() {
                           onClick={(e) => { e.stopPropagation(); handleTableClick(table); }}
                           className={`hidden md:block px-6 py-2 rounded-lg font-bold uppercase tracking-wider text-sm shadow-md transition ${table.players >= table.max ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-[0_0_15px_rgba(147,51,234,0.4)]' : 'bg-cyan-600 hover:bg-cyan-500 text-white group-hover:shadow-[0_0_15px_rgba(6,182,212,0.4)]'}`}
                         >
-                          {table.players >= table.max ? "Watch" : "Join"}
+                          {table.players >= table.max ? t("Watch") : t("Join")}
                         </button>
                       </div>
                     </motion.div>
@@ -876,7 +884,7 @@ export function Lobby() {
             {activeTab === "LEADERBOARD" && (
               <div className="flex flex-col gap-3">
                  <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-xl font-black text-white">Top Players</h2>
+                    <h2 className="text-xl font-black text-white">{t("Top Players")}</h2>
                     <button
                       onClick={() => {
                         void loadLeaderboard();
@@ -884,13 +892,14 @@ export function Lobby() {
                       className="text-xs font-bold text-cyan-400 bg-[#11122D] px-3 py-1 rounded-full hover:text-cyan-300"
                     >
                       {leaderboardLoading ? 'Loading...' : 'Refresh'}
+                      {leaderboardLoading ? t('Loading...') : t('Refresh')}
                     </button>
                  </div>
 
                  <div className="flex flex-col gap-2">
                    {leaderboard.length === 0 ? (
                      <div className="bg-[#11122D] border border-white/10 rounded-2xl p-6 text-slate-300">
-                       <p className="font-bold text-white">표시할 랭킹 데이터가 없습니다.</p>
+                       <p className="font-bold text-white">{t("No ranking data available.")}</p>
                      </div>
                    ) : (
                      leaderboard.slice(0, 20).map((entry, index) => (
@@ -899,7 +908,7 @@ export function Lobby() {
                          className={`relative rounded-xl p-4 flex items-center justify-between ${entry.id === currentUserId ? "bg-cyan-900/35 border border-cyan-400/70" : "bg-[#11122D] border border-white/10"}`}
                        >
                          {entry.id === currentUserId && (
-                           <span className="absolute -top-2 right-3 text-[10px] px-2 py-0.5 rounded-full bg-cyan-400 text-slate-900 font-black">YOU</span>
+                          <span className="absolute -top-2 right-3 text-[10px] px-2 py-0.5 rounded-full bg-cyan-400 text-slate-900 font-black">{t("YOU")}</span>
                          )}
                          <div className="flex items-center gap-3">
                            <div className={`w-9 h-9 rounded-full flex items-center justify-center font-black ${
@@ -931,31 +940,31 @@ export function Lobby() {
               <div className="flex flex-col gap-4">
                  <div className="flex justify-between items-center mb-2">
                     <h2 className="text-xl font-black text-white flex items-center gap-2">
-                      <Target className="text-cyan-400" /> Daily Missions
+                      <Target className="text-cyan-400" /> {t("Daily Missions")}
                     </h2>
-                    <span className="text-sm font-bold text-slate-400">Dummy Missions</span>
+                    <span className="text-sm font-bold text-slate-400">{t("Dummy Missions")}</span>
                  </div>
 
                  <div className="bg-[#11122D] border border-white/10 rounded-2xl p-4 flex items-center justify-between">
                    <div>
-                     <p className="font-black text-white">Play 3 Hands</p>
-                     <p className="text-sm text-slate-400">0 / 3 hands</p>
+                     <p className="font-black text-white">{t("Play 3 Hands")}</p>
+                     <p className="text-sm text-slate-400">0 / 3 {t("hands")}</p>
                    </div>
                    <div className="text-cyan-300 font-bold">+ 300</div>
                  </div>
 
                  <div className="bg-[#11122D] border border-white/10 rounded-2xl p-4 flex items-center justify-between">
                    <div>
-                     <p className="font-black text-white">Win 1 Hand</p>
-                     <p className="text-sm text-slate-400">0 / 1 wins</p>
+                     <p className="font-black text-white">{t("Win 1 Hand")}</p>
+                     <p className="text-sm text-slate-400">0 / 1 {t("wins")}</p>
                    </div>
                    <div className="text-cyan-300 font-bold">+ 500</div>
                  </div>
 
                  <div className="bg-[#11122D] border border-white/10 rounded-2xl p-4 flex items-center justify-between">
                    <div>
-                     <p className="font-black text-white">Join Cash Table</p>
-                     <p className="text-sm text-slate-400">0 / 1 joined</p>
+                     <p className="font-black text-white">{t("Join Cash Table")}</p>
+                     <p className="text-sm text-slate-400">0 / 1 {t("joined")}</p>
                    </div>
                    <div className="text-cyan-300 font-bold">+ 200</div>
                  </div>
@@ -982,7 +991,7 @@ export function Lobby() {
             >
               <div className="bg-[#1A1C3E] p-4 flex justify-between items-center border-b border-white/5">
                 <h3 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
-                  <Users className="text-yellow-400 w-6 h-6"/> Create Table
+                  <Users className="text-yellow-400 w-6 h-6"/> {t("Create Table")}
                 </h3>
                 <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-white transition">
                   <X className="w-6 h-6" />
@@ -991,24 +1000,24 @@ export function Lobby() {
               <div className="p-6">
                 <div className="flex flex-col gap-4">
                   <div>
-                    <label className="block text-sm font-bold text-slate-300 mb-1">Game Mode</label>
+                    <label className="block text-sm font-bold text-slate-300 mb-1">{t("Game Mode")}</label>
                     <select id="createTableMode" className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition">
-                      <option value="ai-bot">AI Bot Training (No Money Risk)</option>
-                      <option value="cash">Cash Game</option>
+                      <option value="ai-bot">{t("AI Bot Training (No Money Risk)")}</option>
+                      <option value="cash">{t("Cash Game")}</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-slate-300 mb-1">Max Table Size</label>
+                    <label className="block text-sm font-bold text-slate-300 mb-1">{t("Max Table Size")}</label>
                     <select id="createTableMax" defaultValue="8" className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition">
-                      <option value="8">8 Players</option>
-                      <option value="6">6 Players</option>
-                      <option value="4">4 Players</option>
-                      <option value="2">2 Players (Heads Up)</option>
+                      <option value="8">{t("8 Players")}</option>
+                      <option value="6">{t("6 Players")}</option>
+                      <option value="4">{t("4 Players")}</option>
+                      <option value="2">{t("2 Players (Heads Up)")}</option>
                     </select>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-sm font-bold text-slate-300 mb-1">Small Blind</label>
+                      <label className="block text-sm font-bold text-slate-300 mb-1">{t("Small Blind")}</label>
                       <input
                         id="createBlindSmall"
                         type="number"
@@ -1018,7 +1027,7 @@ export function Lobby() {
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-bold text-slate-300 mb-1">Big Blind</label>
+                      <label className="block text-sm font-bold text-slate-300 mb-1">{t("Big Blind")}</label>
                       <input
                         id="createBlindBig"
                         type="number"
@@ -1058,12 +1067,12 @@ export function Lobby() {
                          allowStartControl: true,
                        });
                      } catch (error) {
-                       alert(error instanceof Error ? error.message : "테이블 생성에 실패했습니다.");
+                       alert(error instanceof Error ? error.message : t("Failed to create table."));
                      }
                   }}
                   className="mt-6 w-full font-black py-4 rounded-xl text-white uppercase tracking-wider transition-all active:translate-y-1 shadow-lg bg-gradient-to-b from-yellow-400 to-orange-500 shadow-[0_4px_0_#B45309]"
                 >
-                  Create Table
+                  {t("Create Table")}
                 </button>
               </div>
             </motion.div>
@@ -1088,7 +1097,7 @@ export function Lobby() {
             >
               <div className="bg-[#1A1C3E] p-4 flex justify-between items-center border-b border-white/5">
                 <h3 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
-                  <Lock className="text-red-400 w-6 h-6"/> Private Table
+                  <Lock className="text-red-400 w-6 h-6"/> {t("Private Table")}
                 </h3>
                 <button onClick={() => { setPasswordModalTable(null); setJoinCode(""); }} className="text-slate-400 hover:text-white transition">
                   <X className="w-6 h-6" />
@@ -1096,10 +1105,10 @@ export function Lobby() {
               </div>
               <div className="p-6">
                 <div className="flex flex-col gap-4">
-                  <p className="text-sm font-semibold text-slate-300">This table is protected. Please enter the password set by the host to join.</p>
+                  <p className="text-sm font-semibold text-slate-300">{t("This table is protected. Please enter the password set by the host to join.")}</p>
                   <input
                     type="text"
-                    placeholder="Enter Room Code"
+                    placeholder={t("Enter Room Code")}
                     autoFocus
                     value={joinCode}
                     onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
@@ -1124,12 +1133,12 @@ export function Lobby() {
                         allowStartControl: false,
                       });
                     } catch (error) {
-                      alert(error instanceof Error ? error.message : "코드 입장에 실패했습니다.");
+                      alert(error instanceof Error ? error.message : t("Failed to enter table."));
                     }
                   }}
                   className="mt-6 w-full font-black py-4 rounded-xl text-white uppercase tracking-wider transition-all active:translate-y-1 shadow-lg bg-gradient-to-b from-cyan-500 to-blue-600 shadow-[0_4px_0_#1D4ED8]"
                 >
-                  Enter Table
+                  {t("Enter Table")}
                 </button>
               </div>
             </motion.div>
@@ -1158,7 +1167,7 @@ export function Lobby() {
                     <Trophy className="text-purple-400 w-6 h-6"/>
                   </div>
                   <div>
-                    <h3 className="text-xl font-black uppercase tracking-wider text-white">Spectate Tournament</h3>
+                    <h3 className="text-xl font-black uppercase tracking-wider text-white">{t("Spectate Tournament")}</h3>
                     <p className="text-sm text-cyan-400 font-bold">{spectateTournamentModal.name}</p>
                   </div>
                 </div>
@@ -1198,9 +1207,9 @@ export function Lobby() {
                         <div>
                           <h4 className="font-bold text-white text-lg flex items-center gap-2">
                             {tbl.name}
-                            {tbl.id === "t-1" && <span className="bg-red-500 text-[10px] px-2 py-0.5 rounded uppercase tracking-widest">Live</span>}
+                            {tbl.id === "t-1" && <span className="bg-red-500 text-[10px] px-2 py-0.5 rounded uppercase tracking-widest">{t("Live")}</span>}
                           </h4>
-                          <span className="text-xs text-slate-400 font-semibold">Avg Stack: {tbl.avgStack}</span>
+                          <span className="text-xs text-slate-400 font-semibold">{t("Avg Stack")}: {tbl.avgStack}</span>
                         </div>
                         <div className="bg-black/50 px-2 py-1 rounded text-xs font-mono font-bold text-slate-300 flex items-center gap-1 border border-white/5">
                           <Users className="w-3 h-3" />
@@ -1208,7 +1217,7 @@ export function Lobby() {
                         </div>
                       </div>
                       <div className="w-full flex justify-between items-center relative z-10 mt-2 border-t border-white/5 pt-3">
-                        <span className="text-xs font-bold text-purple-400 uppercase tracking-wider group-hover:text-purple-300 transition-colors">Watch Live</span>
+                        <span className="text-xs font-bold text-purple-400 uppercase tracking-wider group-hover:text-purple-300 transition-colors">{t("Watch Live")}</span>
                         <ChevronRight className="w-4 h-4 text-purple-500 group-hover:translate-x-1 transition-transform" />
                       </div>
                     </motion.div>
@@ -1237,7 +1246,7 @@ export function Lobby() {
             >
               <div className="bg-[#1A1C3E] p-4 flex justify-between items-center border-b border-white/5">
                 <h3 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
-                  <Users className="text-cyan-400 w-6 h-6"/> Player Profile
+                  <Users className="text-cyan-400 w-6 h-6"/> {t("Player Profile")}
                 </h3>
                 <button onClick={() => setShowProfileModal(false)} className="text-slate-400 hover:text-white transition">
                   <X className="w-6 h-6" />
@@ -1248,7 +1257,7 @@ export function Lobby() {
                    <img src={avatarPreviewUrl} alt="avatar" />
                  </div>
                  <h2 className="text-2xl font-black">{isLoggedIn ? (profileMe?.nickname ?? userName) : "Guest_1092"}</h2>
-                 <p className="text-cyan-400 font-bold text-sm mb-6 uppercase tracking-widest">{isLoggedIn ? ((profileMe?.role ?? (isPro ? "pro" : "free")) === "pro" ? "PRO Member" : "FREE User") : "Guest"}</p>
+                 <p className="text-cyan-400 font-bold text-sm mb-6 uppercase tracking-widest">{isLoggedIn ? ((profileMe?.role ?? (isPro ? "pro" : "free")) === "pro" ? t("PRO Member") : t("FREE User")) : t("Guest")}</p>
 
                  {profileError && isLoggedIn && (
                    <div className="w-full mb-4 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-300">
@@ -1258,34 +1267,34 @@ export function Lobby() {
 
                  {profileLoading && isLoggedIn && (
                    <div className="w-full mb-4 rounded-lg border border-white/10 bg-[#11122D] px-3 py-3 text-sm font-semibold text-slate-300">
-                     Loading profile...
+                     {t("Loading profile...")}
                    </div>
                  )}
                  
                  {isLoggedIn && (
                    <div className="flex gap-2 w-full mb-6">
-                     <button onClick={() => setProfileTab("stats")} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition ${profileTab === "stats" ? "bg-cyan-600 text-white" : "bg-[#11122D] text-slate-400 hover:text-white"}`}>Stats</button>
-                     <button onClick={() => setProfileTab("avatar")} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition ${profileTab === "avatar" ? "bg-cyan-600 text-white" : "bg-[#11122D] text-slate-400 hover:text-white"}`}>Avatar</button>
-                     <button onClick={() => setProfileTab("settings")} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition ${profileTab === "settings" ? "bg-cyan-600 text-white" : "bg-[#11122D] text-slate-400 hover:text-white"}`}>Settings</button>
+                     <button onClick={() => setProfileTab("stats")} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition ${profileTab === "stats" ? "bg-cyan-600 text-white" : "bg-[#11122D] text-slate-400 hover:text-white"}`}>{t("Stats")}</button>
+                     <button onClick={() => setProfileTab("avatar")} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition ${profileTab === "avatar" ? "bg-cyan-600 text-white" : "bg-[#11122D] text-slate-400 hover:text-white"}`}>{t("Avatar")}</button>
+                     <button onClick={() => setProfileTab("settings")} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition ${profileTab === "settings" ? "bg-cyan-600 text-white" : "bg-[#11122D] text-slate-400 hover:text-white"}`}>{t("Settings")}</button>
                    </div>
                  )}
 
                  {(!isLoggedIn || profileTab === "stats") && (
                    <div className="w-full bg-[#11122D] rounded-xl p-4 border border-white/5 grid grid-cols-2 gap-4 text-center mb-2">
                       <div>
-                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">Win Rate</div>
+                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">{t("Win Rate")}</div>
                         <div className="text-green-400 font-black text-xl">{profileStats ? `${profileStats.winRate.toFixed(1)}%` : "-"}</div>
                       </div>
                       <div>
-                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">Hands Played</div>
+                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">{t("Hands Played")}</div>
                         <div className="text-white font-black text-xl">{profileStats ? profileStats.playedHands.toLocaleString() : "-"}</div>
                       </div>
                       <div>
-                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">Biggest Pot</div>
+                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">{t("Biggest Pot")}</div>
                         <div className="text-yellow-400 font-black text-xl">{profileStats ? `$${profileStats.biggestPot.toLocaleString()}` : "-"}</div>
                       </div>
                       <div>
-                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">Wins</div>
+                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">{t("Wins")}</div>
                         <div className="text-white font-black text-xl">{profileStats ? profileStats.winHands.toLocaleString() : "-"}</div>
                       </div>
                    </div>
@@ -1294,7 +1303,7 @@ export function Lobby() {
                  {isLoggedIn && profileTab === "avatar" && (
                    <div className="w-full flex flex-col gap-4 max-h-[360px] overflow-y-auto pr-2 custom-scrollbar">
                      <div className="flex flex-col gap-2">
-                       <label className="text-[10px] font-bold text-slate-400 uppercase">Hair / Hat</label>
+                       <label className="text-[10px] font-bold text-slate-400 uppercase">{t("Hair / Hat")}</label>
                        <div className="grid grid-cols-2 gap-2">
                          {AVATAR_TOP_OPTIONS.map((option) => (
                            <button
@@ -1310,7 +1319,7 @@ export function Lobby() {
                      </div>
 
                      <div className="flex flex-col gap-2">
-                       <label className="text-[10px] font-bold text-slate-400 uppercase">Skin Color</label>
+                       <label className="text-[10px] font-bold text-slate-400 uppercase">{t("Skin Color")}</label>
                        <div className="flex flex-wrap gap-2">
                          {AVATAR_SKIN_COLORS.map((color) => (
                            <button
@@ -1326,7 +1335,7 @@ export function Lobby() {
                      </div>
 
                      <div className="flex flex-col gap-2">
-                       <label className="text-[10px] font-bold text-slate-400 uppercase">Hair Color</label>
+                       <label className="text-[10px] font-bold text-slate-400 uppercase">{t("Hair Color")}</label>
                        <div className="flex flex-wrap gap-2">
                          {AVATAR_HAIR_COLORS.map((color) => (
                            <button
@@ -1342,7 +1351,7 @@ export function Lobby() {
                      </div>
 
                      <div className="flex flex-col gap-2">
-                       <label className="text-[10px] font-bold text-slate-400 uppercase">Clothing</label>
+                       <label className="text-[10px] font-bold text-slate-400 uppercase">{t("Clothing")}</label>
                        <div className="grid grid-cols-2 gap-2">
                          {AVATAR_OUTFIT_OPTIONS.map((option) => (
                            <button
@@ -1359,7 +1368,7 @@ export function Lobby() {
 
                      <div className="grid grid-cols-2 gap-3">
                        <div className="flex flex-col gap-2">
-                         <label className="text-[10px] font-bold text-slate-400 uppercase">Eyes</label>
+                         <label className="text-[10px] font-bold text-slate-400 uppercase">{t("Eyes")}</label>
                          <div className="flex flex-col gap-2">
                            {AVATAR_EYE_OPTIONS.map((option) => (
                              <button
@@ -1374,7 +1383,7 @@ export function Lobby() {
                          </div>
                        </div>
                        <div className="flex flex-col gap-2">
-                         <label className="text-[10px] font-bold text-slate-400 uppercase">Mouth</label>
+                         <label className="text-[10px] font-bold text-slate-400 uppercase">{t("Mouth")}</label>
                          <div className="flex flex-col gap-2">
                            {AVATAR_MOUTH_OPTIONS.map((option) => (
                              <button
@@ -1391,7 +1400,7 @@ export function Lobby() {
                      </div>
 
                      <div className="flex flex-col gap-2">
-                       <label className="text-[10px] font-bold text-slate-400 uppercase">Eyebrows</label>
+                       <label className="text-[10px] font-bold text-slate-400 uppercase">{t("Eyebrows")}</label>
                        <div className="grid grid-cols-2 gap-2">
                          {AVATAR_FACE_OPTIONS.map((option) => (
                            <button
@@ -1407,7 +1416,7 @@ export function Lobby() {
                      </div>
 
                      <button onClick={() => { void saveAvatar(); }} disabled={profileBusy} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-lg transition shadow-md w-full mt-1 disabled:opacity-50">
-                       Save Avatar
+                       {t("Save Avatar")}
                      </button>
                    </div>
                  )}
@@ -1415,30 +1424,30 @@ export function Lobby() {
                  {isLoggedIn && profileTab === "settings" && (
                    <div className="w-full flex flex-col gap-4">
                      <div className="flex flex-col gap-2">
-                       <label className="text-xs font-bold text-slate-400 uppercase">Change Password</label>
+                       <label className="text-xs font-bold text-slate-400 uppercase">{t("Change Password")}</label>
                        <input
                          type="password"
-                         placeholder="Current Password"
+                         placeholder={t("Current Password")}
                          value={passwordForm.currentPassword}
                          onChange={(event) => setPasswordForm((prev) => ({ ...prev, currentPassword: event.target.value }))}
                          className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-600"
                        />
                        <input
                          type="password"
-                         placeholder="New Password"
+                         placeholder={t("New Password")}
                          value={passwordForm.newPassword}
                          onChange={(event) => setPasswordForm((prev) => ({ ...prev, newPassword: event.target.value }))}
                          className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-600"
                        />
                        <input
                          type="password"
-                         placeholder="Confirm New Password"
+                         placeholder={t("Confirm New Password")}
                          value={passwordForm.confirmPassword}
                          onChange={(event) => setPasswordForm((prev) => ({ ...prev, confirmPassword: event.target.value }))}
                          className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-600"
                        />
                        <button onClick={() => { void updatePassword(); }} disabled={profileBusy} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-lg transition shadow-md w-full mt-2 disabled:opacity-50">
-                         Update Password
+                         {t("Update Password")}
                        </button>
                      </div>
                    </div>
@@ -1466,7 +1475,7 @@ export function Lobby() {
             >
               <div className="bg-[#1A1C3E] p-4 flex justify-between items-center border-b border-white/5">
                 <h3 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
-                  <Settings className="text-slate-300 w-6 h-6"/> Settings
+                  <Settings className="text-slate-300 w-6 h-6"/> {t("Settings")}
                 </h3>
                 <button onClick={() => setShowSettingsModal(false)} className="text-slate-400 hover:text-white transition">
                   <X className="w-6 h-6" />
@@ -1477,7 +1486,7 @@ export function Lobby() {
                  {/* Language */}
                  <div>
                    <h4 className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-3 uppercase tracking-wider">
-                     <Globe className="w-4 h-4"/> Language
+                     <Globe className="w-4 h-4"/> {t("Language")}
                    </h4>
                    <select
                      value={settingsLanguage}
@@ -1494,19 +1503,19 @@ export function Lobby() {
                  {/* Volume */}
                  <div>
                    <h4 className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-3 uppercase tracking-wider">
-                     <Volume2 className="w-4 h-4"/> Audio Settings
+                     <Volume2 className="w-4 h-4"/> {t("Audio Settings")}
                    </h4>
                    <div className="flex flex-col gap-4 bg-[#11122D] p-4 rounded-xl border border-white/5">
                      <div className="flex items-center gap-4">
-                       <span className="text-xs font-bold text-slate-400 w-16">Master</span>
+                       <span className="text-xs font-bold text-slate-400 w-16">{t("Master")}</span>
                        <input type="range" min="0" max="100" defaultValue="80" className="flex-1 accent-cyan-500" />
                      </div>
                      <div className="flex items-center gap-4">
-                       <span className="text-xs font-bold text-slate-400 w-16">Music</span>
+                       <span className="text-xs font-bold text-slate-400 w-16">{t("Music")}</span>
                        <input type="range" min="0" max="100" defaultValue="40" className="flex-1 accent-cyan-500" />
                      </div>
                      <div className="flex items-center gap-4">
-                       <span className="text-xs font-bold text-slate-400 w-16">SFX</span>
+                       <span className="text-xs font-bold text-slate-400 w-16">{t("SFX")}</span>
                        <input type="range" min="0" max="100" defaultValue="100" className="flex-1 accent-cyan-500" />
                      </div>
                    </div>
@@ -1519,7 +1528,7 @@ export function Lobby() {
                    disabled={settingsBusy}
                    className="w-full bg-cyan-600 hover:bg-cyan-500 disabled:opacity-60 text-white font-black py-3 rounded-xl mt-2"
                  >
-                   {settingsBusy ? "Saving..." : "Save Changes"}
+                   {settingsBusy ? t("Saving...") : t("Save Changes")}
                  </button>
               </div>
             </motion.div>
@@ -1552,16 +1561,16 @@ export function Lobby() {
 
                <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2">
                  <button onClick={() => { setShowProfileModal(true); setShowMenu(false); }} className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left">
-                   <Users className="w-5 h-5" /> Profile
+                   <Users className="w-5 h-5" /> {t("Profile")}
                  </button>
                  <button onClick={() => { navigate("/store"); setShowMenu(false); }} className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left">
-                   <ShoppingBag className="w-5 h-5 text-yellow-400" /> Store
+                   <ShoppingBag className="w-5 h-5 text-yellow-400" /> {t("Store")}
                  </button>
                  <button onClick={() => { setShowSettingsModal(true); setShowMenu(false); }} className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left">
-                   <Settings className="w-5 h-5" /> Settings
+                   <Settings className="w-5 h-5" /> {t("Settings")}
                  </button>
                  <button className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left opacity-50 cursor-not-allowed">
-                   <Info className="w-5 h-5" /> Help & Support
+                   <Info className="w-5 h-5" /> {t("Help & Support")}
                  </button>
                </div>
 
@@ -1573,7 +1582,7 @@ export function Lobby() {
                    }}
                    className="flex items-center gap-3 w-full p-3 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 font-bold transition text-left"
                  >
-                   <LogOut className="w-5 h-5" /> {isLoggedIn ? "Log Out" : "Exit to Login"}
+                   <LogOut className="w-5 h-5" /> {isLoggedIn ? t("Log Out") : t("Exit to Login")}
                  </button>
                </div>
             </motion.div>

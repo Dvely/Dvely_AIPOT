@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { useI18n } from "../i18n";
 
 const loadingSteps = [
   "Connecting to Server...",
@@ -11,6 +12,7 @@ const loadingSteps = [
 
 export function LoadingScreen() {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const [stepIndex, setStepIndex] = useState(0);
 
   useEffect(() => {
@@ -47,7 +49,7 @@ export function LoadingScreen() {
             AIPOT
           </h1>
           <p className="text-2xl font-bold text-[#FFD700] uppercase tracking-[0.2em] mt-2 drop-shadow-md">
-            AI Poker Trainer
+            {t("AI Poker Trainer\\nPlay, Analyze, and Improve.").split("\\n")[0]}
           </p>
         </motion.div>
 
@@ -61,7 +63,7 @@ export function LoadingScreen() {
               exit={{ opacity: 0, y: -5 }}
               className="text-sm font-bold text-cyan-300 uppercase tracking-widest"
             >
-              {loadingSteps[stepIndex]}
+              {t(loadingSteps[stepIndex])}
             </motion.p>
           </AnimatePresence>
           

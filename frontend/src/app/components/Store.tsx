@@ -4,6 +4,7 @@ import { ArrowLeft, ShoppingBag, Coins, Crown, Check, Zap } from "lucide-react";
 import { motion } from "motion/react";
 import { apiFetch } from "../api";
 import { getCurrentAuth, patchSessionUser } from "../auth";
+import { useI18n } from "../i18n";
 
 type ChipPackageId = "chips-50k" | "chips-150k" | "chips-500k" | "chips-2000k";
 
@@ -58,6 +59,7 @@ const CHIP_PACKAGES: Array<{
 
 export function Store() {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const { isLoggedIn, isPro, balanceAmount } = getCurrentAuth();
 
   const [walletBalance, setWalletBalance] = useState(balanceAmount);
@@ -100,19 +102,19 @@ export function Store() {
     const cvcDigits = normalizeDigits(cardForm.cvc);
 
     if (!cardForm.holderName.trim()) {
-      alert("카드 소유자 이름을 입력해 주세요.");
+      alert(t("Enter card holder name."));
       return false;
     }
     if (cardDigits.length < 16) {
-      alert("카드 번호 16자리를 입력해 주세요.");
+      alert(t("Enter a 16-digit card number."));
       return false;
     }
     if (expiryDigits.length < 4) {
-      alert("만료일(MM/YY)을 입력해 주세요.");
+      alert(t("Enter expiry date (MM/YY)."));
       return false;
     }
     if (cvcDigits.length < 3) {
-      alert("CVC 3자리를 입력해 주세요.");
+      alert(t("Enter 3-digit CVC."));
       return false;
     }
 
@@ -121,12 +123,12 @@ export function Store() {
 
   const openChipsCheckout = (pkg: (typeof CHIP_PACKAGES)[number]) => {
     if (!canPurchase) {
-      alert("로그인 후 구매할 수 있습니다.");
+      alert(t("You must be signed in to purchase."));
       return;
     }
     setCheckout({
       kind: "chips",
-      title: `${pkg.amountLabel} Chips`,
+      title: `${pkg.amountLabel} ${t("Chips")}`,
       priceLabel: pkg.price,
       packageId: pkg.packageId,
       chipsAmount: pkg.chipsAmount,
@@ -136,11 +138,11 @@ export function Store() {
 
   const openProCheckout = () => {
     if (!canPurchase) {
-      alert("로그인 후 구독할 수 있습니다.");
+      alert(t("You must be signed in to subscribe."));
       return;
     }
     if (proActive) {
-      setNotice("이미 PRO 구독이 활성화되어 있습니다.");
+      setNotice(t("PRO is already active."));
       return;
     }
     setCheckout({
@@ -169,7 +171,11 @@ export function Store() {
           role: response.role,
         });
 
-        setNotice(`결제 완료: +${response.addedAmount.toLocaleString()} chips 지급`);
+        setNotice(
+          t("Payment completed: +{chips} chips", {
+            chips: response.addedAmount.toLocaleString(),
+          }),
+        );
       } else {
         const response = await apiFetch<ProSubscribeResponse>("/profile/store/subscribe-pro", {
           method: "POST",
@@ -183,12 +189,16 @@ export function Store() {
           balanceAmount: response.balanceAmount,
         });
 
-        setNotice(response.alreadySubscribed ? "이미 PRO 구독 상태입니다." : "PRO 구독이 활성화되었습니다.");
+        setNotice(
+          response.alreadySubscribed
+            ? t("PRO is already active.")
+            : t("PRO subscription has been activated."),
+        );
       }
 
       resetCheckout();
     } catch (error) {
-      alert(error instanceof Error ? error.message : "결제 처리에 실패했습니다.");
+      alert(error instanceof Error ? error.message : t("Payment failed."));
       setBusy(false);
     }
   };
@@ -203,12 +213,12 @@ export function Store() {
             className="flex items-center gap-2 text-slate-300 hover:text-white transition"
           >
             <ArrowLeft className="w-5 h-5" />
-            <span className="font-bold">Lobby</span>
+            <span className="font-bold">{t("Lobby")}</span>
           </button>
           <div className="h-6 w-[1px] bg-white/10"></div>
           <h1 className="text-lg font-black tracking-wider uppercase flex items-center gap-2">
             <ShoppingBag className="text-yellow-400 w-5 h-5" />
-            Store
+            {t("Store")}
           </h1>
         </div>
         
@@ -232,15 +242,15 @@ export function Store() {
            <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
               <div>
                 <div className="flex items-center gap-2 bg-yellow-400 text-indigo-900 text-xs font-black uppercase px-3 py-1 rounded-full w-max mb-3 tracking-widest">
-                  <Crown className="w-3 h-3" /> Monthly Pass
+                  <Crown className="w-3 h-3" /> {t("Monthly Pass")}
                 </div>
-                <h2 className="text-3xl md:text-5xl font-black mb-2 leading-tight">PRO BUNDLE</h2>
+                <h2 className="text-3xl md:text-5xl font-black mb-2 leading-tight">{t("PRO BUNDLE")}</h2>
                 <p className="text-indigo-100 font-bold max-w-md">
-                  Unlock unlimited Hand Reviews, 2x daily chips, and completely ad-free experience.
+                  {t("Unlock unlimited Hand Reviews, 2x daily chips, and completely ad-free experience.")}
                 </p>
                 <div className="flex gap-4 mt-6">
-                   <div className="flex items-center gap-2 text-sm font-semibold"><Check className="w-4 h-4 text-yellow-400" /> Infinite Reviews</div>
-                   <div className="flex items-center gap-2 text-sm font-semibold"><Check className="w-4 h-4 text-yellow-400" /> AI Coach Pro</div>
+                   <div className="flex items-center gap-2 text-sm font-semibold"><Check className="w-4 h-4 text-yellow-400" /> {t("Infinite Reviews")}</div>
+                   <div className="flex items-center gap-2 text-sm font-semibold"><Check className="w-4 h-4 text-yellow-400" /> {t("AI Coach Pro")}</div>
                 </div>
               </div>
 
@@ -254,7 +264,7 @@ export function Store() {
                    disabled={!canPurchase || proActive}
                    className="bg-white text-indigo-900 font-black px-8 py-3 rounded-full hover:bg-slate-200 disabled:opacity-60 disabled:cursor-not-allowed transition-colors uppercase tracking-wider shadow-lg"
                  >
-                   {proActive ? "PRO Active" : "Subscribe Now"}
+                   {proActive ? t("PRO Active") : t("Subscribe Now")}
                  </button>
               </div>
            </div>
@@ -264,7 +274,7 @@ export function Store() {
         <div className="mb-10">
           <h3 className="text-xl font-black uppercase tracking-wider mb-6 flex items-center gap-2">
             <Coins className="text-yellow-400" />
-            Buy Chips
+            {t("Buy Chips")}
           </h3>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -311,7 +321,7 @@ export function Store() {
 
         {!isLoggedIn && (
           <div className="mb-8 rounded-xl border border-yellow-500/40 bg-yellow-500/10 p-4 text-yellow-300 font-bold">
-            가상 결제는 로그인 계정에서만 처리됩니다.
+            {t("Virtual payments are available only for signed-in accounts.")}
           </div>
         )}
 
@@ -321,18 +331,18 @@ export function Store() {
         <div className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#1A1C3E] p-6 shadow-2xl">
             <div className="flex items-center justify-between mb-5">
-              <h2 className="text-xl font-black text-white">Virtual Payment</h2>
+              <h2 className="text-xl font-black text-white">{t("Virtual Payment")}</h2>
               <button
                 onClick={resetCheckout}
                 className="text-slate-400 hover:text-white font-bold"
                 disabled={busy}
               >
-                Close
+                {t("Close")}
               </button>
             </div>
 
             <div className="rounded-xl bg-[#11122D] border border-white/10 p-4 mb-4">
-              <p className="text-slate-300 text-sm font-bold uppercase tracking-wider">Item</p>
+              <p className="text-slate-300 text-sm font-bold uppercase tracking-wider">{t("Item")}</p>
               <p className="text-white font-black text-lg">{checkout.title}</p>
               <p className="text-cyan-300 font-bold mt-1">{checkout.priceLabel}</p>
             </div>
@@ -341,26 +351,26 @@ export function Store() {
               <input
                 value={cardForm.holderName}
                 onChange={(event) => updateCardField("holderName", event.target.value)}
-                placeholder="Card Holder Name"
+                placeholder={t("Card Holder Name")}
                 className="bg-[#11122D] border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-cyan-400"
               />
               <input
                 value={cardForm.cardNumber}
                 onChange={(event) => updateCardField("cardNumber", event.target.value)}
-                placeholder="Card Number (16 digits)"
+                placeholder={t("Card Number (16 digits)")}
                 className="bg-[#11122D] border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-cyan-400"
               />
               <div className="grid grid-cols-2 gap-3">
                 <input
                   value={cardForm.expiry}
                   onChange={(event) => updateCardField("expiry", event.target.value)}
-                  placeholder="MM/YY"
+                  placeholder={t("MM/YY")}
                   className="bg-[#11122D] border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-cyan-400"
                 />
                 <input
                   value={cardForm.cvc}
                   onChange={(event) => updateCardField("cvc", event.target.value)}
-                  placeholder="CVC"
+                  placeholder={t("CVC")}
                   className="bg-[#11122D] border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-cyan-400"
                 />
               </div>
@@ -373,11 +383,11 @@ export function Store() {
               disabled={busy}
               className="mt-5 w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-60 disabled:cursor-not-allowed text-white font-black py-3 rounded-xl"
             >
-              {busy ? "Processing..." : "Pay Now"}
+              {busy ? t("Processing...") : t("Pay Now")}
             </button>
 
             <p className="mt-3 text-xs text-slate-400 text-center">
-              This is a virtual payment flow for in-game economy testing.
+              {t("This is a virtual payment flow for in-game economy testing.")}
             </p>
           </div>
         </div>
