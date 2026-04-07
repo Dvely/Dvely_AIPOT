@@ -256,9 +256,10 @@ const getInitialPlayers = (count: number, max: number): Player[] => {
 const FULL_COMMUNITY_CARDS = ["Q♠", "J♠", "10♠", "2♥", "5♣"];
 const HERO_CARDS = ["A♠", "K♠"];
 const TURN_TIMER_SECONDS = 15;
-const SHOWDOWN_RESULT_DISPLAY_MS = 20000;
-const QUICK_RESULT_DISPLAY_MS = 12000;
+const SHOWDOWN_RESULT_DISPLAY_MS = 8000;
+const QUICK_RESULT_DISPLAY_MS = 8000;
 const HAND_RESET_CLEANUP_MS = 5000;
+const LIVE_SYNC_INTERVAL_MS = 600;
 
 const RAW_SUITS = ["S", "H", "D", "C"];
 const RAW_RANKS = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"];
@@ -610,7 +611,11 @@ export function PlayTable() {
   const isLiveHandEndedByFold = Boolean(
     isLiveMode &&
     liveGame?.gameState?.street === "RESULT" &&
-    liveLatestAction?.action === "FOLD",
+    liveLatestAction?.action === "fold",
+  );
+  const isLiveResultStreet = Boolean(
+    isLiveMode &&
+    (liveGame?.gameState?.street === "SHOWDOWN" || liveGame?.gameState?.street === "RESULT"),
   );
   const isCardRevealPhase = isLiveMode
     ? (liveGame?.gameState?.street === "SHOWDOWN" ||
@@ -780,7 +785,7 @@ export function PlayTable() {
         const nextState = game.gameState;
         const latestAction = nextState.actions?.[nextState.actions.length - 1];
         const endedByFold =
-          nextState.street === "RESULT" && latestAction?.action === "FOLD";
+          nextState.street === "RESULT" && latestAction?.action === "fold";
         const nextPhase = endedByFold
           ? toPhaseFromBoardCount(nextState.boardCards.length)
           : toUiPhase(room.status, nextState.street);
@@ -880,7 +885,7 @@ export function PlayTable() {
       if (!liveBusy) {
         void syncLiveTable();
       }
-    }, 1000);
+    }, LIVE_SYNC_INTERVAL_MS);
 
     return () => clearInterval(timer);
   }, [isLiveMode, roomId, currentUserId, liveBusy]);
@@ -1689,7 +1694,7 @@ export function PlayTable() {
             AIPOT
             {/* Showdown Rank Badge */}
             <AnimatePresence>
-              {isShowdownDisplayActive && winningHandRank && (
+              {isShowdownDisplayActive && winningHandRank && (!isLiveMode || isLiveResultStreet) && (
                 <motion.div
                   initial={{ opacity: 0, y: 10, scale: 0.8 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1925,7 +1930,7 @@ export function PlayTable() {
               </div>
             )}
             
-            {winner === p.id && (
+            {winner === p.id && (!isLiveMode || isLiveResultStreet) && (
               <motion.div 
                 initial={{ scale: 0, y: 10 }}
                 animate={{ scale: 1, y: 0 }}

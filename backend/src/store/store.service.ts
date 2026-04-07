@@ -46,7 +46,7 @@ const DEFAULT_AVATAR: AvatarConfig = {
 
 const DEFAULT_ACCOUNT_BALANCE = 10000;
 const DEFAULT_GUEST_BALANCE = 1000;
-const PRIVATE_AI_BOT_NEXT_HAND_DELAY_MS = 12000;
+const PRIVATE_AI_BOT_NEXT_HAND_DELAY_MS = 8000;
 
 @Injectable()
 export class StoreService implements OnModuleInit, OnModuleDestroy {
@@ -1279,7 +1279,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			const user = this.findUserById(participant.userId);
 			if (!user) return;
 			user.stats.playedHands += 1;
-			user.balanceAmount = participant.stackAmount;
+			if (room.type !== RoomType.AI_BOT) {
+				user.balanceAmount = participant.stackAmount;
+			}
 		});
 
 		const review: HandReviewRecord = {
