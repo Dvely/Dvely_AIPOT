@@ -247,6 +247,10 @@ const getInitialPlayers = (count: number, max: number): Player[] => {
 
 const FULL_COMMUNITY_CARDS = ["Q♠", "J♠", "10♠", "2♥", "5♣"];
 const HERO_CARDS = ["A♠", "K♠"];
+const TURN_TIMER_SECONDS = 15;
+const SHOWDOWN_RESULT_DISPLAY_MS = 10000;
+const QUICK_RESULT_DISPLAY_MS = 6000;
+const HAND_RESET_CLEANUP_MS = 5000;
 
 const RAW_SUITS = ["S", "H", "D", "C"];
 const RAW_RANKS = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"];
@@ -478,7 +482,7 @@ function ChipStack({ amount }: { amount: number }) {
   );
 }
 
-function TimerRing({ isActive, duration = 15 }: { isActive: boolean; duration?: number }) {
+function TimerRing({ isActive, duration = TURN_TIMER_SECONDS, resetToken }: { isActive: boolean; duration?: number; resetToken: string }) {
   const [timeLeft, setTimeLeft] = useState(duration);
 
   useEffect(() => {
@@ -488,7 +492,7 @@ function TimerRing({ isActive, duration = 15 }: { isActive: boolean; duration?: 
       setTimeLeft((prev) => (prev > 0 ? prev - 0.1 : 0));
     }, 100);
     return () => clearInterval(interval);
-  }, [isActive, duration]);
+  }, [isActive, duration, resetToken]);
 
   if (!isActive) return null;
 
@@ -539,6 +543,7 @@ export function PlayTable() {
   const [winner, setWinner] = useState<string | null>(null);
   const [winningCards, setWinningCards] = useState<string[]>([]);
   const [winningHandRank, setWinningHandRank] = useState<string | null>(null);
+  const [showdownHoldUntil, setShowdownHoldUntil] = useState(0);
   const [liveRoom, setLiveRoom] = useState<LiveRoom | null>(null);
   const [liveGame, setLiveGame] = useState<LiveGameSnapshot | null>(null);
   const [heroSeatId, setHeroSeatId] = useState<number | null>(null);
@@ -591,6 +596,10 @@ export function PlayTable() {
     liveGame?.gameState?.currentTurnSeatId === heroSeatId,
   );
   const isHeroActionTurn = userState === "playing" && (isLiveMode ? isHeroLiveTurn : activeTurn === "hero");
+  const isShowdownDisplayActive = phase === "showdown" || (winner !== null && Date.now() < showdownHoldUntil);
+  const turnTimerResetToken = isLiveMode
+    ? `${liveGame?.gameState?.handId ?? "no-hand"}:${liveGame?.gameState?.street ?? "no-street"}:${liveGame?.gameState?.currentTurnSeatId ?? "none"}:${liveGame?.gameState?.minCallAmount ?? 0}:${liveGame?.gameState?.maxBetAmount ?? 0}`
+    : `${phase}:${activeTurn ?? "none"}`;
 
   const syncLiveTable = async () => {
     if (!isLiveMode) return;
@@ -742,13 +751,14 @@ export function PlayTable() {
 
           setWinner((prev) => (prev === winnerLocalId ? prev : winnerLocalId));
           setWinningCards((prev) => (sameStringArray(prev, winnerUiCards) ? prev : winnerUiCards));
+          setShowdownHoldUntil((prev) => Math.max(prev, Date.now() + SHOWDOWN_RESULT_DISPLAY_MS));
 
           if (winnerRawCards.length === 2 && game.gameState.boardCards.length >= 3) {
             const score = bestScore([...winnerRawCards, ...game.gameState.boardCards]);
             const nextRank = handScoreLabel(score);
             setWinningHandRank((prev) => (prev === nextRank ? prev : nextRank));
           }
-        } else if (room.status !== "HAND_ENDED") {
+        } else if (room.status !== "HAND_ENDED" && Date.now() >= showdownHoldUntil) {
           setWinner((prev) => (prev === null ? prev : null));
           setWinningCards((prev) => (prev.length === 0 ? prev : []));
           setWinningHandRank((prev) => (prev === null ? prev : null));
@@ -764,9 +774,11 @@ export function PlayTable() {
         setCommunityCards((prev) => (prev.length === 0 ? prev : []));
         setPot((prev) => (prev === 0 ? prev : 0));
         setActiveTurn((prev) => (prev === null ? prev : null));
-        setWinner((prev) => (prev === null ? prev : null));
-        setWinningCards((prev) => (prev.length === 0 ? prev : []));
-        setWinningHandRank((prev) => (prev === null ? prev : null));
+        if (Date.now() >= showdownHoldUntil) {
+          setWinner((prev) => (prev === null ? prev : null));
+          setWinningCards((prev) => (prev.length === 0 ? prev : []));
+          setWinningHandRank((prev) => (prev === null ? prev : null));
+        }
       }
 
       if (room.status === "HAND_ENDED") {
@@ -1032,9 +1044,10 @@ export function PlayTable() {
            setWinningHandRank("Royal Flush");
            setPlayers(prev => prev.map(p => p.id === "hero" ? { ...p, chips: p.chips + pot } : p));
        }
+         setShowdownHoldUntil(Date.now() + SHOWDOWN_RESULT_DISPLAY_MS);
        setTimeout(() => {
           resetHand();
-       }, 5000);
+         }, SHOWDOWN_RESULT_DISPLAY_MS);
     }
 
     return () => clearTimeout(timeout);
@@ -1055,7 +1068,7 @@ export function PlayTable() {
          // 플랍, 턴, 리버에서는 추가 베팅이 필요 없으므로(0) 자동 CHECK
          handleHeroAction("call");
       }
-    }, 15000);
+    }, TURN_TIMER_SECONDS * 1000);
 
     return () => clearTimeout(timer);
   }, [activeTurn, phase, isLiveMode]);
@@ -1076,6 +1089,7 @@ export function PlayTable() {
       setWinner(null);
       setWinningCards([]);
       setWinningHandRank(null);
+      setShowdownHoldUntil(0);
       setPlayers(prev => prev.map(p => ({
         ...p,
         status: (p.chips <= 0 && p.id === "hero") ? "folded" : "active",
@@ -1088,7 +1102,7 @@ export function PlayTable() {
       setHeroEquity(null);
       setIsRaising(false);
       setRaiseAmount("");
-    }, 2500);
+    }, HAND_RESET_CLEANUP_MS);
   };
 
   const handleLiveStartOrNext = async () => {
@@ -1303,15 +1317,16 @@ export function PlayTable() {
                 setWinningHandRank("Straight Flush");
                 setTimeout(() => setUserState("eliminated"), 4000);
              }
+               setShowdownHoldUntil(Date.now() + SHOWDOWN_RESULT_DISPLAY_MS);
              setTimeout(() => {
                 setActiveTurn(null);
                 resetHand();
-             }, 5000);
+               }, SHOWDOWN_RESULT_DISPLAY_MS);
           } else {
              setLog("BTN folds. YOU win!");
              setWinner("hero");
              setActiveTurn(null);
-             setTimeout(() => resetHand(), 3000);
+               setTimeout(() => resetHand(), QUICK_RESULT_DISPLAY_MS);
           }
         }, 1500);
       }, 1500);
@@ -1565,7 +1580,7 @@ export function PlayTable() {
             AIPOT
             {/* Showdown Rank Badge */}
             <AnimatePresence>
-              {phase === "showdown" && winningHandRank && (
+              {isShowdownDisplayActive && winningHandRank && (
                 <motion.div
                   initial={{ opacity: 0, y: 10, scale: 0.8 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -1595,7 +1610,7 @@ export function PlayTable() {
           {/* Community Cards */}
           <div className="flex gap-1.5 md:gap-3 mt-1 h-[60px] md:h-[80px] items-center">
             {communityCards.map((card, i) => {
-              const isWinningCard = phase === "showdown" && winningCards.includes(card);
+              const isWinningCard = isShowdownDisplayActive && winningCards.includes(card);
               return (
               <motion.div
                 key={i}
@@ -1690,11 +1705,11 @@ export function PlayTable() {
       {players.map((p) => (
         <div key={p.id} className={`absolute flex flex-col items-center z-30 transition-all ${p.id === 'hero' && userState !== 'playing' ? 'opacity-40 grayscale sepia' : ''}`} style={getPlayerPosStyle(p.pos, tableSeatCount)}>
           
-          <div className="absolute z-20" style={getBetPosStyle(p.pos, tableSeatCount)}>
+          <div className={`absolute z-20 ${p.id === 'hero' ? 'translate-x-4 -translate-y-4 md:translate-x-6 md:-translate-y-6' : ''}`} style={getBetPosStyle(p.pos, tableSeatCount)}>
             <ChipStack amount={p.bet} />
           </div>
 
-          <div className={`relative w-full flex justify-center h-0 ${phase === 'showdown' && p.status !== 'folded' ? 'z-50' : 'z-10'}`}>
+          <div className={`relative w-full flex justify-center h-0 ${isShowdownDisplayActive && p.status !== 'folded' ? 'z-50' : 'z-10'}`}>
              {/* AI Win Probability HUD for Hero */}
              {p.id === 'hero' && userState === 'playing' && p.cardsDealt && heroEquity !== null && (
                <motion.div 
@@ -1721,8 +1736,8 @@ export function PlayTable() {
 
              <div className={`absolute flex gap-1 ${
                 p.id === 'hero' 
-                  ? (phase === 'showdown' ? '-top-[70px] md:-top-[90px] scale-110 z-50' : '-top-[50px] md:-top-[70px] scale-100 md:scale-110 z-40') 
-                  : (phase === 'showdown' && p.status !== 'folded' ? 'top-10 md:top-14 scale-110 z-50' : 'top-[70%] left-1/2 -translate-x-1/2 md:top-[80%] scale-90 md:scale-100 z-10')
+                  ? (isShowdownDisplayActive ? '-top-[70px] md:-top-[90px] scale-110 z-50' : '-top-[50px] md:-top-[70px] scale-100 md:scale-110 z-40') 
+                  : (isShowdownDisplayActive && p.status !== 'folded' ? 'top-10 md:top-14 scale-110 z-50' : 'top-[70%] left-1/2 -translate-x-1/2 md:top-[80%] scale-90 md:scale-100 z-10')
                 } pointer-events-none transition-all duration-500`}>
                 {p.cardsDealt && p.id === 'hero' && userState !== 'playing' ? null : p.cardsDealt && (() => {
                   const fallbackCards: Record<string, [string, string]> = {
@@ -1739,11 +1754,11 @@ export function PlayTable() {
                     ? ([liveCards[0] ?? "", liveCards[1] ?? ""] as [string, string])
                     : (p.id === 'hero' ? HERO_CARDS : fallbackCards[p.id] ?? ["", ""]);
                   const showCards = isLiveMode
-                    ? (p.id === 'hero' ? liveCards.length === 2 : (phase === 'showdown' && p.status !== 'folded' && liveCards.length === 2))
-                    : (p.id === 'hero' || (phase === 'showdown' && p.status !== 'folded'));
-                  const c1Winner = phase === 'showdown' && winner === p.id && winningCards.includes(pCards?.[0] || "");
-                  const c2Winner = phase === 'showdown' && winner === p.id && winningCards.includes(pCards?.[1] || "");
-                  const isHeroShowdown = p.id === 'hero' && phase === 'showdown';
+                    ? (p.id === 'hero' ? liveCards.length === 2 : (isShowdownDisplayActive && p.status !== 'folded' && liveCards.length === 2))
+                    : (p.id === 'hero' || (isShowdownDisplayActive && p.status !== 'folded'));
+                  const c1Winner = isShowdownDisplayActive && winner === p.id && winningCards.includes(pCards?.[0] || "");
+                  const c2Winner = isShowdownDisplayActive && winner === p.id && winningCards.includes(pCards?.[1] || "");
+                  const isHeroShowdown = p.id === 'hero' && isShowdownDisplayActive;
                   
                   return (
                   <>
@@ -1770,7 +1785,7 @@ export function PlayTable() {
           </div>
 
           <div className={`relative w-20 h-20 md:w-24 md:h-24 rounded-full border-4 shadow-2xl z-30 bg-slate-800 ${activeTurn === p.id ? 'border-cyan-400 shadow-[0_0_30px_rgba(6,182,212,0.6)] scale-105 transition-transform' : 'border-slate-700'} ${p.status === 'folded' ? 'opacity-50 grayscale' : ''}`}>
-            <TimerRing isActive={activeTurn === p.id} />
+            <TimerRing isActive={activeTurn === p.id} duration={TURN_TIMER_SECONDS} resetToken={turnTimerResetToken} />
             
             <div className={`absolute -right-2 -top-2 md:-right-3 md:-top-3 w-8 h-8 md:w-10 md:h-10 rounded-full border-2 border-slate-900 flex items-center justify-center text-[10px] md:text-xs font-black text-white shadow-lg ${
               p.role === 'BTN' ? 'bg-white text-slate-900' :
