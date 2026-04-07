@@ -88,6 +88,9 @@ interface HandReviewRecord {
     displayName: string;
     holeCards: string[];
   }[];
+  positions?: Record<string, string>;
+  blindSmall?: number;
+  blindBig?: number;
   boardCards: string[];
   actions: HandReviewAction[];
   winnerPlayerId: string;
@@ -184,9 +187,18 @@ function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): H
         .filter((action) => action.playerId === heroParticipant.playerId)
         .reduce((sum, action) => sum + Math.max(action.amount, 0), 0)
     : 0;
+  const heroPosition = heroParticipant
+    ? record.positions?.[String(heroParticipant.seatId)]
+    : undefined;
+  const heroBlindContribution = heroParticipant
+    ? (heroPosition === "SB" || heroPosition === "BTN/SB" ? (record.blindSmall ?? 0) : 0) +
+      (heroPosition === "BB" ? (record.blindBig ?? 0) : 0)
+    : 0;
   const heroWon = Boolean(heroParticipant && record.winnerPlayerId === heroParticipant.playerId);
   const handNet = heroParticipant
-    ? (heroWon ? record.resultPot - heroContribution : -heroContribution)
+    ? (heroWon
+      ? record.resultPot - (heroContribution + heroBlindContribution)
+      : -(heroContribution + heroBlindContribution))
     : record.resultPot;
   const winnerLabel =
     participants.find((participant) => participant.playerId === record.winnerPlayerId)

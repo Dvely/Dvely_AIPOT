@@ -1039,7 +1039,6 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		room.gameState.minCallAmount = 0;
 		room.gameState.minRaiseAmount = room.blindBig;
 		room.gameState.actedSeatIds = [];
-		room.gameState.lastAggressiveSeatId = null;
 	}
 
 	private dealBoardCards(room: RoomRecord, count: number) {
@@ -1319,6 +1318,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 					},
 				];
 			}),
+			positions: { ...state.positions },
+			blindSmall: room.blindSmall,
+			blindBig: room.blindBig,
 			boardCards: [...state.boardCards],
 			actions: [...state.actions],
 			winnerPlayerId: orderedWinners[0].playerId,
@@ -1337,8 +1339,6 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		room.seats.forEach((seat) => {
 			if (!seat.participant) return;
 			seat.participant.currentBetAmount = 0;
-			seat.participant.folded = false;
-			seat.participant.allIn = false;
 		});
 
 		if (room.type === RoomType.AI_BOT) {
@@ -1396,7 +1396,20 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			return;
 		}
 
-		const next = this.nextTurnSeatId(room, state.dealerSeatId) ?? state.dealerSeatId;
+		const activeAggressorSeat = state.lastAggressiveSeatId
+			? room.seats.find(
+					(seat) =>
+						seat.participant?.seatId === state.lastAggressiveSeatId &&
+						!seat.participant.folded &&
+						!seat.participant.allIn,
+				)
+			: null;
+
+		const next = activeAggressorSeat
+			? activeAggressorSeat.seatId
+			: state.lastAggressiveSeatId
+				? this.nextTurnSeatId(room, state.lastAggressiveSeatId) ?? state.dealerSeatId
+				: this.nextTurnSeatId(room, state.dealerSeatId) ?? state.dealerSeatId;
 		state.currentTurnSeatId = next;
 		state.actionTimerDeadline = new Date(
 			Date.now() + this.turnTimeoutSec * 1000,

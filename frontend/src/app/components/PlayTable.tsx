@@ -1,6 +1,6 @@
 import { useLocation, useNavigate } from "react-router";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, MessageCircle, Settings, Users, Info, Trophy, Clock, Coins, Target, X, Plus } from "lucide-react";
+import { ArrowLeft, MessageCircle, Settings, Users, Info, Trophy, Clock, Coins, Target, X, Plus, Check } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { getCurrentAuth, getCurrentUserId } from "../auth";
 import { apiFetch } from "../api";
@@ -21,12 +21,14 @@ interface Player {
   chips: number;
   bet: number;
   status: "active" | "folded";
+  allIn?: boolean;
   cardsDealt: boolean;
   holeCards: string[];
   seatId?: number;
 }
 
 type LiveActionType = "fold" | "check" | "call" | "bet" | "raise" | "all-in";
+type ActionFxType = "check" | "fold" | "all-in";
 
 interface LiveParticipant {
   seatId: number;
@@ -130,7 +132,15 @@ interface LiveGameState {
   handId: string;
   street: string;
   boardCards: string[];
-  actions?: Array<{ action: string }>;
+  actions?: Array<{
+    order: number;
+    seatId: number;
+    playerId: string;
+    action: LiveActionType;
+    amount: number;
+    potAfter: number;
+    street: string;
+  }>;
   currentTurnSeatId: number | null;
   minCallAmount: number;
   minRaiseAmount: number;
@@ -221,6 +231,7 @@ function samePlayers(prev: Player[], next: Player[]) {
       a.chips !== b.chips ||
       a.bet !== b.bet ||
       a.status !== b.status ||
+      Boolean(a.allIn) !== Boolean(b.allIn) ||
       a.cardsDealt !== b.cardsDealt ||
       a.seatId !== b.seatId ||
       !sameStringArray(a.holeCards, b.holeCards)
@@ -268,6 +279,8 @@ const SHOWDOWN_RESULT_DISPLAY_MS = 8000;
 const QUICK_RESULT_DISPLAY_MS = 8000;
 const HAND_RESET_CLEANUP_MS = 5000;
 const LIVE_SYNC_INTERVAL_MS = 600;
+const ACTION_FX_DURATION_MS = 950;
+const SHOWDOWN_AFTER_ACTION_DELAY_MS = 800;
 
 const RAW_SUITS = ["S", "H", "D", "C"];
 const RAW_RANKS = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"];
@@ -574,6 +587,9 @@ export function PlayTable() {
   const [botStyle, setBotStyle] = useState<BotStyle>("balanced");
   const lastAnimatedLiveHandIdRef = useRef<string | null>(null);
   const autoNextHandKeyRef = useRef<string | null>(null);
+  const lastSeenLiveActionKeyRef = useRef<string | null>(null);
+  const [actionFxByPlayer, setActionFxByPlayer] = useState<Record<string, { type: ActionFxType; expiresAt: number }>>({});
+  const [showdownDelayUntil, setShowdownDelayUntil] = useState(0);
 
   // Raise Action State
   const [isRaising, setIsRaising] = useState(false);
@@ -626,9 +642,12 @@ export function PlayTable() {
     isLiveMode &&
     (liveGame?.gameState?.street === "SHOWDOWN" || liveGame?.gameState?.street === "RESULT"),
   );
+  const isShowdownRevealBlocked =
+    isLiveMode && isLiveResultStreet && Date.now() < showdownDelayUntil;
   const isCardRevealPhase = isLiveMode
-    ? (liveGame?.gameState?.street === "SHOWDOWN" ||
-      (liveGame?.gameState?.street === "RESULT" && !isLiveHandEndedByFold))
+    ? ((liveGame?.gameState?.street === "SHOWDOWN" ||
+      (liveGame?.gameState?.street === "RESULT" && !isLiveHandEndedByFold)) &&
+      !isShowdownRevealBlocked)
     : phase === "showdown";
   const isShowdownDisplayActive = phase === "showdown" || (winner !== null && Date.now() < showdownHoldUntil);
   const turnTimerResetToken = isLiveMode
@@ -638,6 +657,24 @@ export function PlayTable() {
   useEffect(() => {
     showdownHoldUntilRef.current = showdownHoldUntil;
   }, [showdownHoldUntil]);
+
+  const triggerActionFx = (playerId: string, type: ActionFxType) => {
+    const expiresAt = Date.now() + ACTION_FX_DURATION_MS;
+    setActionFxByPlayer((prev) => ({
+      ...prev,
+      [playerId]: { type, expiresAt },
+    }));
+
+    setTimeout(() => {
+      setActionFxByPlayer((prev) => {
+        const current = prev[playerId];
+        if (!current || current.expiresAt !== expiresAt) return prev;
+        const next = { ...prev };
+        delete next[playerId];
+        return next;
+      });
+    }, ACTION_FX_DURATION_MS + 40);
+  };
 
   useEffect(() => {
     if (!isLiveMode) {
@@ -705,6 +742,21 @@ export function PlayTable() {
 
     return () => clearTimeout(timer);
   }, [showdownHoldUntil]);
+
+  useEffect(() => {
+    if (showdownDelayUntil <= 0) return;
+    const remaining = showdownDelayUntil - Date.now();
+    if (remaining <= 0) {
+      setShowdownDelayUntil(0);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setShowdownDelayUntil(0);
+    }, remaining + 20);
+
+    return () => clearTimeout(timer);
+  }, [showdownDelayUntil]);
 
   const syncLiveTable = async () => {
     if (!isLiveMode) return;
@@ -819,6 +871,7 @@ export function PlayTable() {
             chips: participant.stackAmount,
             bet: participant.currentBetAmount,
             status: participant.folded ? "folded" : "active",
+            allIn: Boolean(participant.allIn),
             cardsDealt: participant.holeCards.length > 0 && !shouldAnimateDeal,
             holeCards: participant.holeCards,
             seatId: seat.seatId,
@@ -835,6 +888,26 @@ export function PlayTable() {
       if (game?.gameState) {
         const nextState = game.gameState;
         const latestAction = nextState.actions?.[nextState.actions.length - 1];
+        const latestActionKey = latestAction
+          ? `${nextState.handId}:${latestAction.order}:${latestAction.action}`
+          : null;
+
+        if (latestAction && latestActionKey && latestActionKey !== lastSeenLiveActionKeyRef.current) {
+          lastSeenLiveActionKeyRef.current = latestActionKey;
+
+          const actorPlayerId = seatMap.get(latestAction.seatId);
+          if (actorPlayerId && (latestAction.action === "check" || latestAction.action === "fold" || latestAction.action === "all-in")) {
+            triggerActionFx(actorPlayerId, latestAction.action as ActionFxType);
+          }
+
+          const shouldDelayShowdown =
+            (latestAction.action === "check" || latestAction.action === "fold") &&
+            (nextState.street === "SHOWDOWN" || nextState.street === "RESULT");
+          if (shouldDelayShowdown) {
+            setShowdownDelayUntil(Date.now() + SHOWDOWN_AFTER_ACTION_DELAY_MS);
+          }
+        }
+
         const endedByFold =
           nextState.street === "RESULT" && latestAction?.action === "fold";
         const nextPhase = endedByFold
@@ -897,6 +970,7 @@ export function PlayTable() {
           }, 450);
         }
       } else {
+        lastSeenLiveActionKeyRef.current = null;
         setPhase((prev) => (prev === "init" ? prev : "init"));
         setCommunityCards((prev) => (prev.length === 0 ? prev : []));
         setPot((prev) => (prev === 0 ? prev : 0));
@@ -1898,6 +1972,25 @@ export function PlayTable() {
           )
           : activeTurn === p.id;
         const isTimerActive = isPlayerTurn;
+        const actionFx = actionFxByPlayer[p.id];
+        const hasCheckFx = actionFx?.type === "check";
+        const hasFoldFx = actionFx?.type === "fold";
+        const hasAllInFx = Boolean(p.allIn) || actionFx?.type === "all-in";
+        const roleBadgeClass =
+          p.role === "BTN" || p.role === "BTN/SB"
+            ? "bg-amber-400 text-slate-900"
+            : p.role === "SB"
+              ? "bg-blue-500 text-white"
+              : p.role === "BB"
+                ? "bg-purple-600 text-white"
+                : "bg-slate-600 text-white";
+        const avatarStateClass = hasAllInFx
+          ? "border-violet-400 shadow-[0_0_30px_rgba(139,92,246,0.6)]"
+          : hasCheckFx
+            ? "border-yellow-300 shadow-[0_0_24px_rgba(250,204,21,0.55)]"
+            : isTimerActive
+              ? "border-cyan-400 shadow-[0_0_30px_rgba(6,182,212,0.6)] scale-105 transition-transform"
+              : "border-slate-700";
 
         return (
         <div key={p.id} className={`absolute flex flex-col items-center z-30 transition-all ${p.id === 'hero' && userState !== 'playing' ? 'opacity-40 grayscale sepia' : ''}`} style={getPlayerPosStyle(p.pos, tableSeatCount)}>
@@ -1981,19 +2074,35 @@ export function PlayTable() {
              </div>
           </div>
 
-          <div className={`relative w-20 h-20 md:w-24 md:h-24 rounded-full border-4 shadow-2xl z-30 bg-slate-800 ${isTimerActive ? 'border-cyan-400 shadow-[0_0_30px_rgba(6,182,212,0.6)] scale-105 transition-transform' : 'border-slate-700'} ${p.status === 'folded' ? 'opacity-50 grayscale' : ''}`}>
+          <div className={`relative w-20 h-20 md:w-24 md:h-24 rounded-full border-4 shadow-2xl z-30 bg-slate-800 ${avatarStateClass} ${hasFoldFx ? 'ring-4 ring-red-500/50' : ''} ${p.status === 'folded' ? 'opacity-50 grayscale' : ''}`}>
             <TimerRing isActive={isTimerActive} duration={TURN_TIMER_SECONDS} resetToken={turnTimerResetToken} />
             
-            <div className={`absolute -right-2 -top-2 md:-right-3 md:-top-3 w-8 h-8 md:w-10 md:h-10 rounded-full border-2 border-slate-900 flex items-center justify-center text-[10px] md:text-xs font-black text-white shadow-lg ${
-              p.role === 'BTN' ? 'bg-white text-slate-900' :
-              p.role === 'SB' ? 'bg-blue-500' :
-              p.role === 'BB' ? 'bg-purple-600' :
-              'bg-slate-600'
-            }`}>
+            <div className={`absolute -right-2 -top-2 md:-right-3 md:-top-3 w-8 h-8 md:w-10 md:h-10 rounded-full border-2 border-slate-900 flex items-center justify-center text-[10px] md:text-xs font-black shadow-lg ${roleBadgeClass}`}>
               {p.role}
             </div>
 
             <img src={p.avatarUrl ?? toAvatarUrl(p.avatarSeed)} alt={p.name} className="w-full h-full object-cover rounded-full" />
+
+            {hasCheckFx && (
+              <motion.div
+                initial={{ opacity: 0, y: 6, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -4, scale: 0.9 }}
+                className="absolute -top-10 left-1/2 -translate-x-1/2 bg-yellow-400 text-slate-900 px-2 py-1 rounded-full text-[10px] md:text-xs font-black tracking-wider border border-yellow-200 shadow-[0_0_12px_rgba(250,204,21,0.5)] flex items-center gap-1"
+              >
+                <Check className="w-3 h-3" /> V
+              </motion.div>
+            )}
+
+            {hasAllInFx && (
+              <motion.div
+                initial={{ opacity: 0, y: 6, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                className="absolute -bottom-4 left-1/2 -translate-x-1/2 bg-violet-600 text-white px-3 py-1 rounded-full text-[10px] md:text-xs font-black tracking-wider border border-violet-300 shadow-[0_0_14px_rgba(139,92,246,0.6)]"
+              >
+                ALL-IN
+              </motion.div>
+            )}
             
             {p.status === 'folded' && (
               <div className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center text-sm font-black text-white">
@@ -2007,7 +2116,7 @@ export function PlayTable() {
               </div>
             )}
             
-            {winner === p.id && (!isLiveMode || isLiveResultStreet) && (
+            {winner === p.id && (!isLiveMode || (isLiveResultStreet && !isShowdownRevealBlocked)) && (
               <motion.div 
                 initial={{ scale: 0, y: 10 }}
                 animate={{ scale: 1, y: 0 }}

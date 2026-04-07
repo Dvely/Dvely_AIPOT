@@ -165,6 +165,9 @@ export interface HandReviewRecord {
   roomId: string;
   participantIds: string[];
   participants?: HandReviewParticipant[];
+  positions?: Record<number, PositionLabel>;
+  blindSmall?: number;
+  blindBig?: number;
   boardCards: string[];
   actions: HandAction[];
   winnerPlayerId: string;
