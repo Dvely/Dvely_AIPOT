@@ -605,7 +605,7 @@ export function PlayTable() {
     heroSeatId !== null &&
     liveGame?.gameState?.currentTurnSeatId === heroSeatId,
   );
-  const isHeroActionTurn = userState === "playing" && (isLiveMode ? (isHeroLiveTurn && !actionBusy) : activeTurn === "hero");
+  const isHeroActionTurn = userState === "playing" && (isLiveMode ? isHeroLiveTurn : activeTurn === "hero");
   const liveLatestAction = liveGame?.gameState?.actions?.[liveGame.gameState.actions.length - 1];
   const isLiveHandEndedByFold = Boolean(
     isLiveMode &&
@@ -623,6 +623,31 @@ export function PlayTable() {
 
   useEffect(() => {
     showdownHoldUntilRef.current = showdownHoldUntil;
+  }, [showdownHoldUntil]);
+
+  useEffect(() => {
+    if (showdownHoldUntil <= 0) return;
+
+    const clearResultVisuals = () => {
+      setWinner((prev) => (prev === null ? prev : null));
+      setWinningCards((prev) => (prev.length === 0 ? prev : []));
+      setWinningHandRank((prev) => (prev === null ? prev : null));
+      lastResultHandIdRef.current = null;
+      showdownHoldUntilRef.current = 0;
+      setShowdownHoldUntil((prev) => (prev === 0 ? prev : 0));
+    };
+
+    const remaining = showdownHoldUntil - Date.now();
+    if (remaining <= 0) {
+      clearResultVisuals();
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      clearResultVisuals();
+    }, remaining + 20);
+
+    return () => clearTimeout(timer);
   }, [showdownHoldUntil]);
 
   const syncLiveTable = async () => {
@@ -752,31 +777,32 @@ export function PlayTable() {
       });
 
       if (game?.gameState) {
-        const latestAction = game.gameState.actions?.[game.gameState.actions.length - 1];
+        const nextState = game.gameState;
+        const latestAction = nextState.actions?.[nextState.actions.length - 1];
         const endedByFold =
-          game.gameState.street === "RESULT" && latestAction?.action === "FOLD";
+          nextState.street === "RESULT" && latestAction?.action === "FOLD";
         const nextPhase = endedByFold
-          ? toPhaseFromBoardCount(game.gameState.boardCards.length)
-          : toUiPhase(room.status, game.gameState.street);
+          ? toPhaseFromBoardCount(nextState.boardCards.length)
+          : toUiPhase(room.status, nextState.street);
         const displayPhase = shouldAnimateDeal && nextPhase === "preflop" ? "dealing" : nextPhase;
-        const nextCommunityCards = game.gameState.boardCards.map(toUiCard);
+        const nextCommunityCards = nextState.boardCards.map(toUiCard);
         const nextTurn =
-          game.gameState.currentTurnSeatId
-            ? seatMap.get(game.gameState.currentTurnSeatId) ?? null
+          nextState.currentTurnSeatId
+            ? seatMap.get(nextState.currentTurnSeatId) ?? null
             : null;
 
         setPhase((prev) => (prev === displayPhase ? prev : displayPhase));
         setCommunityCards((prev) =>
           sameStringArray(prev, nextCommunityCards) ? prev : nextCommunityCards,
         );
-        setPot((prev) => (prev === game.gameState.potAmount ? prev : game.gameState.potAmount));
+        setPot((prev) => (prev === nextState.potAmount ? prev : nextState.potAmount));
         setActiveTurn((prev) => (prev === nextTurn ? prev : nextTurn));
 
-        const winnerPlayerId = game.gameState.winnerPlayerIds?.[0];
+        const winnerPlayerId = nextState.winnerPlayerIds?.[0];
         if (winnerPlayerId) {
           const isShowdownStreet =
-            game.gameState.street === "SHOWDOWN" ||
-            (game.gameState.street === "RESULT" && !endedByFold);
+            nextState.street === "SHOWDOWN" ||
+            (nextState.street === "RESULT" && !endedByFold);
           const winnerSeat = room.seats.find(
             (seat) => seat.participant?.playerId === winnerPlayerId,
           );
@@ -788,15 +814,15 @@ export function PlayTable() {
 
           setWinner((prev) => (prev === winnerLocalId ? prev : winnerLocalId));
           setWinningCards((prev) => (sameStringArray(prev, winnerUiCards) ? prev : winnerUiCards));
-          if (lastResultHandIdRef.current !== game.gameState.handId) {
-            lastResultHandIdRef.current = game.gameState.handId;
+          if (lastResultHandIdRef.current !== nextState.handId) {
+            lastResultHandIdRef.current = nextState.handId;
             const holdUntil = Date.now() + SHOWDOWN_RESULT_DISPLAY_MS;
             showdownHoldUntilRef.current = holdUntil;
             setShowdownHoldUntil(holdUntil);
           }
 
-          if (isShowdownStreet && winnerRawCards.length === 2 && game.gameState.boardCards.length >= 3) {
-            const score = bestScore([...winnerRawCards, ...game.gameState.boardCards]);
+          if (isShowdownStreet && winnerRawCards.length === 2 && nextState.boardCards.length >= 3) {
+            const score = bestScore([...winnerRawCards, ...nextState.boardCards]);
             const nextRank = handScoreLabel(score);
             setWinningHandRank((prev) => (prev === nextRank ? prev : nextRank));
           } else {
@@ -923,7 +949,7 @@ export function PlayTable() {
 
   useEffect(() => {
     if (isLiveMode) return;
-    let timeout: NodeJS.Timeout;
+    let timeout: ReturnType<typeof setTimeout>;
 
     if (phase === "init") {
       setHeroEquity(null);
@@ -1270,10 +1296,33 @@ export function PlayTable() {
     if (!isLiveMode && activeTurn !== "hero") return;
 
     if (isLiveMode) {
+      if (action === "raise") {
+        const previewAmount = Number.isFinite(amount ?? NaN)
+          ? Number(amount)
+          : Number(raiseAmount);
+        if (!Number.isFinite(previewAmount) || previewAmount <= 0) {
+          alert("유효한 레이즈 금액을 입력해 주세요.");
+          return;
+        }
+
+        const state = liveGame?.gameState;
+        const hero = players.find((player) => player.id === "hero");
+        const effectiveStack = hero ? hero.chips + hero.bet : 0;
+        const isAllInPreview = effectiveStack > 0 && previewAmount >= effectiveStack;
+        if (!isAllInPreview && state) {
+          const minRaiseTo = state.maxBetAmount > 0
+            ? state.maxBetAmount + Math.max(state.minRaiseAmount, liveRoom?.blindBig ?? 0)
+            : Math.max(state.minRaiseAmount, liveRoom?.blindBig ?? 1);
+          if (previewAmount < minRaiseTo) {
+            alert(`최소 레이즈 금액은 ${minRaiseTo} 입니다.`);
+            return;
+          }
+        }
+      }
+
       if (actionBusy || liveBusy) return;
 
       const sendLiveAction = async () => {
-        setLiveBusy(true);
         setActionBusy(true);
         try {
           const latest = await apiFetch<LiveGameSnapshot>(`/game/rooms/${roomId}/state`);
@@ -1317,6 +1366,7 @@ export function PlayTable() {
             }
           }
 
+          setLiveBusy(true);
           await apiFetch(`/game/rooms/${roomId}/act`, {
             method: "POST",
             body: JSON.stringify(payload),
@@ -1765,7 +1815,7 @@ export function PlayTable() {
         const isPlayerTurn = isLiveMode
           ? Boolean(p.seatId !== undefined && liveGame?.gameState?.currentTurnSeatId === p.seatId)
           : activeTurn === p.id;
-        const isTimerActive = isPlayerTurn && !(p.id === "hero" && actionBusy);
+        const isTimerActive = isPlayerTurn;
 
         return (
         <div key={p.id} className={`absolute flex flex-col items-center z-30 transition-all ${p.id === 'hero' && userState !== 'playing' ? 'opacity-40 grayscale sepia' : ''}`} style={getPlayerPosStyle(p.pos, tableSeatCount)}>

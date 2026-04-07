@@ -8,10 +8,25 @@ import { ActDto } from './dto/act.dto';
 
 @Injectable()
 export class GameService {
+	private readonly botThinkDelayMs = 2200;
+
 	constructor(
 		private readonly store: StoreService,
 		private readonly aiService: AiService,
 	) {}
+
+	private shouldDelayBotAction(room: RoomRecord): boolean {
+		const state = room.gameState;
+		if (!state) return false;
+
+		const lastActionTime = state.actions.at(-1)?.createdAt;
+		if (!lastActionTime) return false;
+
+		const lastActionMs = Date.parse(lastActionTime);
+		if (!Number.isFinite(lastActionMs)) return false;
+
+		return Date.now() - lastActionMs < this.botThinkDelayMs;
+	}
 
 	private getBotTurn(roomId: string): {
 		room: RoomRecord;
@@ -224,6 +239,9 @@ export class GameService {
 			if (!botTurn) return;
 
 			const { room, bot } = botTurn;
+			if (this.shouldDelayBotAction(room)) {
+				return;
+			}
 			let action = await this.decideBotActionFast(room, bot);
 
 			try {

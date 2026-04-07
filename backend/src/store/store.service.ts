@@ -46,6 +46,7 @@ const DEFAULT_AVATAR: AvatarConfig = {
 
 const DEFAULT_ACCOUNT_BALANCE = 10000;
 const DEFAULT_GUEST_BALANCE = 1000;
+const PRIVATE_AI_BOT_NEXT_HAND_DELAY_MS = 12000;
 
 @Injectable()
 export class StoreService implements OnModuleInit, OnModuleDestroy {
@@ -343,6 +344,17 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		const isPrivateAiBotRoom = room.isPrivate && room.type === RoomType.AI_BOT;
 
 		if (room.status === RoomStatus.HAND_ENDED) {
+			if (isPrivateAiBotRoom) {
+				const endedAt = room.gameState?.actions.at(-1)?.createdAt;
+				const endedAtMs = endedAt ? Date.parse(endedAt) : NaN;
+				if (
+					Number.isFinite(endedAtMs) &&
+					Date.now() - endedAtMs < PRIVATE_AI_BOT_NEXT_HAND_DELAY_MS
+				) {
+					return changed;
+				}
+			}
+
 			room.gameState = null;
 			room.seats.forEach((seat) => {
 				if (!seat.participant) return;
