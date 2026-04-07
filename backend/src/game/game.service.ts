@@ -8,6 +8,7 @@ import { ActDto } from './dto/act.dto';
 
 const BOT_TURN_TIMEOUT_MS = 15_000;
 const BOT_THINK_DELAY_MS = 1_200;
+const BOT_DECISION_FALLBACK_DELAY_MS = 5_600;
 
 @Injectable()
 export class GameService {
@@ -55,16 +56,137 @@ export class GameService {
 			return { action: ActionType.CHECK };
 		}
 
+		const style = bot.botConfig?.style ?? 'balanced';
+		const aggressionChance =
+			style === 'aggressive'
+				? 0.48
+				: style === 'tight'
+					? 0.14
+					: style === 'random'
+						? 0.32
+						: 0.24;
+
 		const toCall = Math.max(state.maxBetAmount - bot.currentBetAmount, 0);
+		const maxTotalBet = bot.currentBetAmount + bot.stackAmount;
+		const minRaiseTo =
+			state.maxBetAmount + Math.max(state.minRaiseAmount, room.blindBig);
+		const canRaise = state.maxBetAmount > 0 && maxTotalBet > minRaiseTo;
+		const canBet = state.maxBetAmount === 0 && bot.stackAmount > room.blindBig;
+		const roll = Math.random();
+
 		if (toCall <= 0) {
+			if (canBet && roll < aggressionChance) {
+				const baseBet = Math.max(
+					room.blindBig,
+					Math.floor(state.potAmount * 0.5),
+					room.blindBig * 2,
+				);
+				const betAmount = Math.min(
+					Math.max(room.blindBig, baseBet),
+					bot.stackAmount,
+				);
+				if (betAmount >= bot.stackAmount) {
+					return { action: ActionType.ALL_IN };
+				}
+				return { action: ActionType.BET, amount: betAmount };
+			}
 			return { action: ActionType.CHECK };
 		}
 
-		if (toCall <= Math.max(room.blindBig, Math.floor(bot.stackAmount * 0.15))) {
+		if (canRaise && roll < aggressionChance * 0.85) {
+			const potDrivenRaiseTo =
+				state.maxBetAmount + Math.max(room.blindBig, Math.floor(state.potAmount * 0.6));
+			const raiseTo = Math.min(Math.max(minRaiseTo, potDrivenRaiseTo), maxTotalBet);
+			if (raiseTo >= maxTotalBet) {
+				return { action: ActionType.ALL_IN };
+			}
+			if (raiseTo > state.maxBetAmount && raiseTo > bot.currentBetAmount) {
+				return { action: ActionType.RAISE, amount: raiseTo };
+			}
+		}
+
+		if (toCall <= Math.max(room.blindBig * 2, Math.floor(bot.stackAmount * 0.25))) {
+			return { action: ActionType.CALL };
+		}
+
+		if (
+			style === 'aggressive' &&
+			toCall <= Math.max(room.blindBig * 3, Math.floor(bot.stackAmount * 0.4))
+		) {
+			return { action: ActionType.CALL };
+		}
+
+		if (
+			style === 'random' &&
+			Math.random() < 0.2 &&
+			toCall <= Math.max(room.blindBig * 3, Math.floor(bot.stackAmount * 0.35))
+		) {
 			return { action: ActionType.CALL };
 		}
 
 		return { action: ActionType.FOLD };
+	}
+
+	private buildBotDecisionContext(
+		room: RoomRecord,
+		state: NonNullable<RoomRecord['gameState']>,
+		bot: PlayerState,
+	) {
+		const totalPlayers = room.seats.filter((seat) => seat.participant).length;
+		const activePlayers = room.seats.filter(
+			(seat) => seat.participant && !seat.participant.folded,
+		).length;
+		const allInPlayers = room.seats.filter(
+			(seat) => seat.participant?.allIn,
+		).length;
+		const toCallAmount = Math.max(state.maxBetAmount - bot.currentBetAmount, 0);
+		const minRaiseTo =
+			state.maxBetAmount + Math.max(state.minRaiseAmount, room.blindBig);
+
+		const previousActionsThisStreet = state.actions
+			.filter((action) => action.street === state.street)
+			.map((action) => {
+				const potBefore = Math.max(action.potAfter - action.amount, 0);
+				return {
+					order: action.order,
+					seatId: action.seatId,
+					playerId: action.playerId,
+					action: action.action,
+					amountPaid: action.amount,
+					potBefore,
+					potAfter: action.potAfter,
+					potRatioToBefore:
+						potBefore > 0
+							? Number((action.amount / potBefore).toFixed(3))
+							: null,
+				};
+			});
+
+		return {
+			tableSummary: {
+				totalPlayers,
+				activePlayers,
+				foldedPlayers: Math.max(totalPlayers - activePlayers, 0),
+				allInPlayers,
+				potAmount: state.potAmount,
+				blindSmall: room.blindSmall,
+				blindBig: room.blindBig,
+				street: state.street,
+				currentTurnSeatId: state.currentTurnSeatId,
+			},
+			actorSnapshot: {
+				seatId: bot.seatId,
+				playerId: bot.playerId,
+				position: state.positions[bot.seatId] ?? null,
+				stackAmount: bot.stackAmount,
+				currentBetAmount: bot.currentBetAmount,
+				toCallAmount,
+				minRaiseTo,
+				maxBetAmount: state.maxBetAmount,
+				holeCards: [...bot.holeCards],
+			},
+			previousActionsThisStreet,
+		};
 	}
 
 	private normalizeBotAction(
@@ -156,6 +278,7 @@ export class GameService {
 		}
 
 		try {
+			const decisionContext = this.buildBotDecisionContext(room, state, bot);
 			const result = await this.aiService.generateBotAction(
 				{
 					roomId: room.id,
@@ -193,6 +316,7 @@ export class GameService {
 									: null,
 							})),
 						},
+						decisionContext,
 					},
 				},
 				UserRole.PRO,
@@ -216,7 +340,10 @@ export class GameService {
 		}>([
 			this.decideBotAction(room, bot),
 			new Promise((resolve) => {
-				setTimeout(() => resolve(this.fallbackBotAction(room, bot)), 1200);
+				setTimeout(
+					() => resolve(this.fallbackBotAction(room, bot)),
+					BOT_DECISION_FALLBACK_DELAY_MS,
+				);
 			}),
 		]);
 	}

@@ -9,7 +9,7 @@ import { ActionType, BotModelTier, LlmProvider } from '../common/enums/room.enum
 import { BotActionRequestDto } from './dto/bot-action-request.dto';
 import { HandReviewRequestDto } from './dto/hand-review-request.dto';
 
-const BOT_PROVIDER_TIMEOUT_MS = 4000;
+const BOT_PROVIDER_TIMEOUT_MS = 5000;
 const REVIEW_PROVIDER_TIMEOUT_MS = 10000;
 
 @Injectable()
@@ -340,8 +340,13 @@ export class AiService {
 		const style = dto.playStyle ?? 'balanced';
 
 		const systemPrompt = [
-			'You are AIPOT poker bot engine.',
+			'You are AIPOT poker bot engine for No-Limit Texas Hold\'em.',
 			'You must decide the next action using ONLY provided cumulative state.',
+			'Use context.decisionContext.actorSnapshot first: stack, toCall, minRaiseTo, position, and own holeCards.',
+			'Use context.decisionContext.previousActionsThisStreet to understand only prior actions in this turn sequence.',
+			'Use pot-based sizing and pot ratios when selecting bet/raise amounts.',
+			'Avoid always-passive play; include balanced aggression and occasional bluff/semi-bluff when strategically justified.',
+			'Available actions are fold, check, call, bet, raise, all-in. Choose bet/raise when pressure is strategically valid.',
 			'Never invent hidden cards.',
 			'Return strict JSON only.',
 			'Schema: {"action":"fold|check|call|bet|raise|all-in","amount":number,"reason":string,"confidence":0-1}',

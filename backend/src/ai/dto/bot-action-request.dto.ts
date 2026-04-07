@@ -20,6 +20,13 @@ class BotActionContextDto {
   @ApiProperty({ description: '현재 핸드까지 누적 액션/상태(JSON)' })
   @IsObject()
   accumulatedState!: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    description: '현재 턴 의사결정 보조 컨텍스트(JSON): actor/테이블 요약/같은 스트리트 이전 액션',
+  })
+  @IsOptional()
+  @IsObject()
+  decisionContext?: Record<string, unknown>;
 }
 
 export class BotActionRequestDto {
