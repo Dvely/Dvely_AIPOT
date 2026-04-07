@@ -392,12 +392,19 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		name: string;
 		type: RoomType;
 		maxSeats: number;
+		blindSmall?: number;
+		blindBig?: number;
 		hostUserId: string;
 		hostDisplayName: string;
 		hostAvatar: AvatarConfig | null;
 		hostStackAmount: number;
 	}): RoomRecord {
 		const maxSeats = Math.min(Math.max(params.maxSeats, 2), 9);
+		const blindSmall = Math.max(1, Math.floor(params.blindSmall ?? 50));
+		const blindBig = Math.max(
+			blindSmall,
+			Math.floor(params.blindBig ?? blindSmall * 2),
+		);
 
 		const room: RoomRecord = {
 			id: randomUUID(),
@@ -409,8 +416,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			maxSeats,
 			isPrivate: true,
 			hasBeenPublic: false,
-			blindSmall: 50,
-			blindBig: 100,
+			blindSmall,
+			blindBig,
 			seats: this.createEmptySeats(maxSeats),
 			gameState: null,
 			createdAt: new Date().toISOString(),
@@ -653,6 +660,33 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
 		seat.participant = null;
 		this.setReadyState(room);
+		this.markDirty();
+		return room;
+	}
+
+	updateRoomBlinds(params: {
+		roomId: string;
+		actorUserId: string;
+		blindSmall: number;
+		blindBig: number;
+	}): RoomRecord {
+		const room = this.ensureRoom(params.roomId);
+		this.assertHostControlAllowed(room, params.actorUserId);
+		this.assertRoomEditable(room);
+
+		const blindSmall = Math.floor(params.blindSmall);
+		const blindBig = Math.floor(params.blindBig);
+		if (!Number.isFinite(blindSmall) || blindSmall < 1) {
+			throw new BadRequestException('Small blind는 1 이상 정수여야 합니다.');
+		}
+		if (!Number.isFinite(blindBig) || blindBig < blindSmall) {
+			throw new BadRequestException(
+				'Big blind는 Small blind 이상 정수여야 합니다.',
+			);
+		}
+
+		room.blindSmall = blindSmall;
+		room.blindBig = blindBig;
 		this.markDirty();
 		return room;
 	}

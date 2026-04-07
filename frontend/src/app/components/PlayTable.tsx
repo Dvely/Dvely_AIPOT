@@ -800,6 +800,43 @@ export function PlayTable() {
     }
   };
 
+  const handleUpdateBlinds = async () => {
+    if (!isLiveMode || !liveRoom || !canManageLiveRoom) return;
+
+    const smallInput = window.prompt("Small blind 금액", String(liveRoom.blindSmall));
+    if (smallInput === null) return;
+    const parsedSmall = Number.parseInt(smallInput, 10);
+    if (!Number.isFinite(parsedSmall) || parsedSmall < 1) {
+      alert("Small blind는 1 이상 정수여야 합니다.");
+      return;
+    }
+
+    const bigInput = window.prompt("Big blind 금액", String(Math.max(liveRoom.blindBig, parsedSmall)));
+    if (bigInput === null) return;
+    const parsedBig = Number.parseInt(bigInput, 10);
+    if (!Number.isFinite(parsedBig) || parsedBig < parsedSmall) {
+      alert("Big blind는 Small blind 이상 정수여야 합니다.");
+      return;
+    }
+
+    setLiveBusy(true);
+    try {
+      await apiFetch(`/rooms/${roomId}/blinds`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          blindSmall: parsedSmall,
+          blindBig: parsedBig,
+        }),
+      });
+      await syncLiveTable();
+      setLog(`Blinds updated: ${parsedSmall} / ${parsedBig}`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "블라인드 수정에 실패했습니다.");
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
   const handleSitOut = async () => {
     if (!isLiveMode) {
       setUserState("spectating");
@@ -1085,6 +1122,17 @@ export function PlayTable() {
         </div>
 
         <div className="flex gap-4 pointer-events-auto">
+          {isLiveMode && canManageLiveRoom && (
+            <button
+              onClick={() => {
+                void handleUpdateBlinds();
+              }}
+              disabled={liveBusy}
+              className="px-4 py-2 bg-slate-700/80 hover:bg-slate-600/80 rounded-full text-white font-bold text-sm backdrop-blur-md border border-slate-300/30 transition shadow-lg"
+            >
+              Edit Blinds
+            </button>
+          )}
           {canConvertToPublic && (
             <button
               onClick={() => {

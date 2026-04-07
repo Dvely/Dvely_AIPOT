@@ -12,7 +12,7 @@ export class LobbyService {
 		private readonly usersService: UsersService,
 	) {}
 
-	listTables(user: JwtUserPayload, roomType?: RoomType) {
+	listTables(_user: JwtUserPayload, roomType?: RoomType) {
 		const summaries = this.store.listRoomSummaries(roomType);
 		return summaries.filter((summary) => {
 			if (summary.type === RoomType.TOURNAMENT) {
@@ -22,8 +22,7 @@ export class LobbyService {
 			return (
 				summary.humanPlayers > 0 &&
 				summary.hasBeenPublic &&
-				!summary.isPrivate &&
-				summary.hostUserId === user.sub
+				!summary.isPrivate
 			);
 		});
 	}

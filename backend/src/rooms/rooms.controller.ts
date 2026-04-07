@@ -21,6 +21,7 @@ import { RoomsService } from './rooms.service';
 import { AddBotDto } from './dto/add-bot.dto';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { JoinRoomByCodeDto } from './dto/join-room-by-code.dto';
+import { UpdateRoomBlindsDto } from './dto/update-room-blinds.dto';
 import { UpdateBotDto } from './dto/update-bot.dto';
 
 @ApiTags('rooms')
@@ -38,8 +39,8 @@ export class RoomsController {
 
 	@Get(':roomId')
 	@ApiOperation({ summary: '룸 상세 조회' })
-	getRoom(@Param('roomId') roomId: string) {
-		return this.roomsService.getRoom(roomId);
+	getRoom(@CurrentUser() user: JwtUserPayload, @Param('roomId') roomId: string) {
+		return this.roomsService.getRoom(user, roomId);
 	}
 
 	@Post('join/code')
@@ -131,5 +132,15 @@ export class RoomsController {
 		@Param('seatId', ParseIntPipe) seatId: number,
 	) {
 		return this.roomsService.removeBot(user, roomId, seatId);
+	}
+
+	@Patch(':roomId/blinds')
+	@ApiOperation({ summary: '룸 블라인드 수정 (방장/비공개 룸 한정)' })
+	updateBlinds(
+		@CurrentUser() user: JwtUserPayload,
+		@Param('roomId') roomId: string,
+		@Body() dto: UpdateRoomBlindsDto,
+	) {
+		return this.roomsService.updateBlinds(user, roomId, dto);
 	}
 }

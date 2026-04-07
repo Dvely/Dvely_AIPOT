@@ -6,12 +6,18 @@ import {
 } from '@nestjs/common';
 import { JwtUserPayload } from '../common/domain.types';
 import { UserRole } from '../common/enums/role.enum';
-import { LlmProvider, RoomType, BotModelTier } from '../common/enums/room.enum';
+import {
+	LlmProvider,
+	RoomType,
+	BotModelTier,
+	RoomStatus,
+} from '../common/enums/room.enum';
 import { StoreService } from '../store/store.service';
 import { UsersService } from '../users/users.service';
 import { AddBotDto } from './dto/add-bot.dto';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { JoinRoomByCodeDto } from './dto/join-room-by-code.dto';
+import { UpdateRoomBlindsDto } from './dto/update-room-blinds.dto';
 import { UpdateBotDto } from './dto/update-bot.dto';
 
 @Injectable()
@@ -49,6 +55,8 @@ export class RoomsService {
 			name: dto.name,
 			type: dto.type,
 			maxSeats: dto.maxSeats,
+			blindSmall: dto.blindSmall,
+			blindBig: dto.blindBig,
 			hostUserId: user.sub,
 			hostDisplayName: profile.displayName,
 			hostAvatar: profile.avatar,
@@ -56,9 +64,62 @@ export class RoomsService {
 		});
 	}
 
-	getRoom(roomId: string) {
+	getRoom(user: JwtUserPayload, roomId: string) {
 		this.store.autoResolveTimeout(roomId);
-		return this.store.getRoomDetail(roomId);
+		const room = this.store.getRoomDetail(roomId);
+		const isHost = room.hostUserId === user.sub;
+		const isAlreadySeated = room.seats.some(
+			(seat) => seat.participant?.userId === user.sub,
+		);
+		const participantCount = room.seats.filter((seat) => seat.participant).length;
+		const isSeatableStatus =
+			room.status === RoomStatus.WAITING_SETUP ||
+			room.status === RoomStatus.READY ||
+			room.status === RoomStatus.HAND_ENDED;
+		const createdAtMs = Date.parse(room.createdAt);
+		const isFreshPrivateRoom =
+			Number.isFinite(createdAtMs) && Date.now() - createdAtMs < 5 * 60 * 1000;
+		const shouldRecoverHostSeat =
+			isFreshPrivateRoom &&
+			room.status === RoomStatus.WAITING_SETUP &&
+			participantCount === 0;
+
+		if (
+			!isHost ||
+			isAlreadySeated ||
+			!room.isPrivate ||
+			!isSeatableStatus ||
+			!shouldRecoverHostSeat
+		) {
+			return room;
+		}
+
+		const profile = this.getUserProfile(user);
+		try {
+			const preferredSeat = room.seats.find(
+				(seat) => seat.seatId === 1 && !seat.participant,
+			);
+			if (preferredSeat) {
+				return this.store.takeSeat({
+					roomId,
+					seatId: 1,
+					userId: user.sub,
+					displayName: profile.displayName,
+					avatar: profile.avatar,
+					stackAmount: profile.stackAmount,
+				});
+			}
+
+			return this.store.joinRoomFirstEmptySeat({
+				roomId,
+				userId: user.sub,
+				displayName: profile.displayName,
+				avatar: profile.avatar,
+				stackAmount: profile.stackAmount,
+			});
+		} catch {
+			return this.store.getRoomDetail(roomId);
+		}
 	}
 
 	joinByCode(user: JwtUserPayload, dto: JoinRoomByCodeDto) {
@@ -176,5 +237,14 @@ export class RoomsService {
 
 	removeBot(user: JwtUserPayload, roomId: string, seatId: number) {
 		return this.store.removeBot(roomId, seatId, user.sub);
+	}
+
+	updateBlinds(user: JwtUserPayload, roomId: string, dto: UpdateRoomBlindsDto) {
+		return this.store.updateRoomBlinds({
+			roomId,
+			actorUserId: user.sub,
+			blindSmall: dto.blindSmall,
+			blindBig: dto.blindBig,
+		});
 	}
 }

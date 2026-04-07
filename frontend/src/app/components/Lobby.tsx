@@ -947,12 +947,38 @@ export function Lobby() {
                       <option value="2">2 Players (Heads Up)</option>
                     </select>
                   </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-bold text-slate-300 mb-1">Small Blind</label>
+                      <input
+                        id="createBlindSmall"
+                        type="number"
+                        min={1}
+                        defaultValue={50}
+                        className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-slate-300 mb-1">Big Blind</label>
+                      <input
+                        id="createBlindBig"
+                        type="number"
+                        min={1}
+                        defaultValue={100}
+                        className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition"
+                      />
+                    </div>
+                  </div>
                 </div>
                 <button 
                   onClick={async () => {
                      const maxVal = parseInt((document.getElementById("createTableMax") as HTMLSelectElement)?.value || "8");
                      const modeVal = (document.getElementById("createTableMode") as HTMLSelectElement)?.value || "ai-bot";
+                     const blindSmallInput = parseInt((document.getElementById("createBlindSmall") as HTMLInputElement)?.value || "50");
+                     const blindBigInput = parseInt((document.getElementById("createBlindBig") as HTMLInputElement)?.value || "100");
                      const roomType: LobbyRoomType = modeVal === "cash" ? "cash" : "ai_bot";
+                     const blindSmall = Number.isFinite(blindSmallInput) && blindSmallInput > 0 ? blindSmallInput : 50;
+                     const blindBig = Number.isFinite(blindBigInput) && blindBigInput >= blindSmall ? blindBigInput : Math.max(100, blindSmall * 2);
 
                      try {
                        const created = await apiFetch<{ id: string; type: LobbyRoomType }>("/rooms", {
@@ -961,6 +987,8 @@ export function Lobby() {
                            name: modeVal === "cash" ? "Custom Cash Game" : "Custom Bot Game",
                            type: roomType,
                            maxSeats: maxVal,
+                           blindSmall,
+                           blindBig,
                          }),
                        });
 
