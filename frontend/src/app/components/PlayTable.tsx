@@ -44,11 +44,65 @@ interface LiveSeat {
 interface LiveRoom {
   id: string;
   status: string;
+  hostUserId: string;
+  isPrivate: boolean;
+  hasBeenPublic: boolean;
   maxSeats: number;
   blindSmall: number;
   blindBig: number;
   seats: LiveSeat[];
 }
+type BotStyle = "balanced" | "aggressive" | "tight" | "random";
+
+interface BotModelOption {
+  id: string;
+  label: string;
+  provider: "local" | "openai" | "claude" | "gemini";
+  modelTier: "free" | "paid";
+  model: string;
+  proOnly?: boolean;
+}
+
+const BOT_MODEL_OPTIONS: BotModelOption[] = [
+  {
+    id: "local-qwen",
+    label: "Local Qwen 2.5 Coder",
+    provider: "local",
+    modelTier: "free",
+    model: "qwen2.5-coder:3b",
+  },
+  {
+    id: "local-exaone",
+    label: "Local EXAONE Deep",
+    provider: "local",
+    modelTier: "free",
+    model: "exaone-deep:2.4b",
+  },
+  {
+    id: "openai-gpt41-mini",
+    label: "OpenAI GPT-4.1 mini",
+    provider: "openai",
+    modelTier: "paid",
+    model: "gpt-4.1-mini",
+    proOnly: true,
+  },
+  {
+    id: "claude-3-5-sonnet",
+    label: "Claude 3.5 Sonnet",
+    provider: "claude",
+    modelTier: "paid",
+    model: "claude-3-5-sonnet-latest",
+    proOnly: true,
+  },
+  {
+    id: "gemini-1-5-pro",
+    label: "Gemini 1.5 Pro",
+    provider: "gemini",
+    modelTier: "paid",
+    model: "gemini-1.5-pro",
+    proOnly: true,
+  },
+];
 
 interface LiveGameState {
   handId: string;
@@ -191,6 +245,7 @@ export function PlayTable() {
   const currentUserId = getCurrentUserId();
   
   const isTournament = location.state?.mode === "tournament";
+  const allowStartControl = Boolean(location.state?.allowStartControl);
   const queryRoomId = new URLSearchParams(location.search).get("roomId")?.trim() ?? "";
   const stateRoomId = typeof location.state?.roomId === "string" ? (location.state.roomId as string).trim() : "";
   const roomId = queryRoomId || stateRoomId;
@@ -215,6 +270,8 @@ export function PlayTable() {
   const [liveGame, setLiveGame] = useState<LiveGameSnapshot | null>(null);
   const [heroSeatId, setHeroSeatId] = useState<number | null>(null);
   const [liveBusy, setLiveBusy] = useState(false);
+  const [botModelId, setBotModelId] = useState<string>("local-qwen");
+  const [botStyle, setBotStyle] = useState<BotStyle>("balanced");
 
   // Raise Action State
   const [isRaising, setIsRaising] = useState(false);
@@ -229,6 +286,8 @@ export function PlayTable() {
   const [isTableBreaking, setIsTableBreaking] = useState(false);
   const [nextStageName, setNextStageName] = useState("");
   const tableSeatCount = isLiveMode ? (liveRoom?.maxSeats ?? maxPlayers) : maxPlayers;
+  const isRoomHost = Boolean(currentUserId) && liveRoom?.hostUserId === currentUserId;
+  const canManageLiveRoom = !isLiveMode || (allowStartControl && isRoomHost && !!liveRoom?.isPrivate && !liveRoom?.hasBeenPublic);
 
   const syncLiveTable = async () => {
     if (!isLiveMode) return;
@@ -298,6 +357,8 @@ export function PlayTable() {
         setLog("Hand complete. Ready for next hand.");
       } else if (room.status === "IN_HAND") {
         setLog("Live hand in progress");
+      } else if (!allowStartControl || !isRoomHost) {
+        setLog("Waiting for host control...");
       } else {
         setLog("Waiting to start...");
       }
@@ -324,7 +385,13 @@ export function PlayTable() {
     }, 2500);
 
     return () => clearInterval(timer);
-  }, [isLiveMode, roomId, currentUserId, liveBusy]);
+  }, [isLiveMode, roomId, currentUserId, liveBusy, allowStartControl, isRoomHost]);
+
+  useEffect(() => {
+    if (selectedSeat === null) return;
+    setBotModelId("local-qwen");
+    setBotStyle("balanced");
+  }, [selectedSeat]);
 
   useEffect(() => {
     if (!isTournament) return;
@@ -1001,7 +1068,7 @@ export function PlayTable() {
 
         {/* START GAME / DEAL HAND Button */}
         {((!isLiveMode && phase === "init" && userState === "playing") ||
-          (isLiveMode && liveRoom && (liveRoom.status === "WAITING_SETUP" || liveRoom.status === "READY" || liveRoom.status === "HAND_ENDED"))) && (
+          (isLiveMode && canManageLiveRoom && liveRoom && (liveRoom.status === "WAITING_SETUP" || liveRoom.status === "READY" || liveRoom.status === "HAND_ENDED"))) && (
           <button 
             onClick={() => {
               if (isLiveMode) {
@@ -1042,7 +1109,7 @@ export function PlayTable() {
       </div>
 
       {/* Render Empty Seats */}
-      {!isTournament && Array.from({ length: tableSeatCount }).map((_, i) => {
+      {!isTournament && (!isLiveMode || canManageLiveRoom) && Array.from({ length: tableSeatCount }).map((_, i) => {
         if (players.find(p => p.pos === i)) return null;
         if (phase !== "init" && phase !== "showdown") return null; // Only allow adding between hands
         return (
@@ -1357,40 +1424,54 @@ export function PlayTable() {
                  </button>
                </div>
                
-               <div className="flex flex-col gap-4">
+                 <div className="flex flex-col gap-4">
                  <div>
-                   <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Bot Play Style</label>
-                   <select id="botPlayStyle" className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition">
-                     <option value="balanced">Balanced / GTO (Free Model)</option>
-                     <option value="aggressive">Aggressive (Free Model)</option>
-                     <option value="tight">Tight (Free Model)</option>
-                     <option value="random">Random (Free Model)</option>
-                     {isPro ? (
-                       <option value="gto-wizard">GTO Wizard API (PRO Model)</option>
-                     ) : (
-                       <option value="gto-wizard" disabled>🔒 GTO Wizard API (PRO Only)</option>
-                     )}
+                   <label className="block text-xs font-bold text-slate-400 uppercase mb-2">AI Model</label>
+                   <select
+                     value={botModelId}
+                     onChange={(event) => setBotModelId(event.target.value)}
+                     className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition"
+                   >
+                     {BOT_MODEL_OPTIONS.map((option) => (
+                       <option key={option.id} value={option.id} disabled={Boolean(option.proOnly && !isPro)}>
+                         {option.proOnly && !isPro ? `🔒 ${option.label} (PRO)` : option.label}
+                       </option>
+                     ))}
+                   </select>
+                 </div>
+                 <div>
+                   <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Play Style</label>
+                   <select
+                     value={botStyle}
+                     onChange={(event) => setBotStyle(event.target.value as BotStyle)}
+                     className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition"
+                   >
+                     <option value="balanced">Balanced</option>
+                     <option value="aggressive">Aggressive</option>
+                     <option value="tight">Tight</option>
+                     <option value="random">Random</option>
                    </select>
                  </div>
                  <button 
                    onClick={() => {
                      const addBot = async () => {
-                       const styleRaw = (document.getElementById("botPlayStyle") as HTMLSelectElement)?.value || "balanced";
+                       const selectedModel = BOT_MODEL_OPTIONS.find((option) => option.id === botModelId) ?? BOT_MODEL_OPTIONS[0];
+                       if (selectedModel.proOnly && !isPro) {
+                         alert("PRO 전용 AI 모델입니다.");
+                         return;
+                       }
                        if (selectedSeat === null) return;
 
                        if (isLiveMode) {
-                         const normalizedStyle = styleRaw === "gto-wizard" ? "balanced" : styleRaw;
-                         const modelTier = styleRaw === "gto-wizard" ? "paid" : "free";
-                         const provider = styleRaw === "gto-wizard" ? "openai" : "local";
-
                          setLiveBusy(true);
                          try {
                            await apiFetch(`/rooms/${roomId}/seats/${selectedSeat + 1}/bot`, {
                              method: "POST",
                              body: JSON.stringify({
-                               modelTier,
-                               provider,
-                               style: normalizedStyle,
+                               modelTier: selectedModel.modelTier,
+                               provider: selectedModel.provider,
+                               style: botStyle,
+                               model: selectedModel.model,
                              }),
                            });
                            setSelectedSeat(null);
@@ -1407,7 +1488,7 @@ export function PlayTable() {
                        const avatars = ["Felix", "Aneka", "Oliver", "Jasper", "Zoe", "Luna", "Max", "Leo"];
                        const newBot: Player = {
                          id: newId,
-                         name: `Bot (${styleRaw})`,
+                         name: `${selectedModel.label} (${botStyle})`,
                          pos: selectedSeat,
                          role: "BTN",
                          avatarSeed: avatars[selectedSeat] || "Max",

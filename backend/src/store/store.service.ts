@@ -3,6 +3,7 @@ import {
 	ConflictException,
 	Injectable,
 	OnModuleInit,
+	OnModuleDestroy,
 	NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -18,6 +19,7 @@ import {
 	RoomStatus,
 	RoomType,
 } from '../common/enums/room.enum';
+import { UserRole } from '../common/enums/role.enum';
 import {
 	AvatarConfig,
 	GameState,
@@ -31,23 +33,27 @@ import {
 import { StateSnapshotEntity } from './entities/state-snapshot.entity';
 
 const DEFAULT_AVATAR: AvatarConfig = {
-	hairStyle: 'shortHairShortFlat',
+	hairStyle: 'shortFlat',
 	skinTone: 'ffdbb4',
-	hairColor: 'black',
+	hairColor: '2c1b18',
 	faceType: 'default',
 	eyeType: 'default',
 	mouthType: 'smile',
 	outfit: 'hoodie',
 };
 
+const DEFAULT_ACCOUNT_BALANCE = 10000;
+const DEFAULT_GUEST_BALANCE = 1000;
+
 @Injectable()
-export class StoreService implements OnModuleInit {
+export class StoreService implements OnModuleInit, OnModuleDestroy {
 	private readonly users = new Map<string, UserRecord>();
 	private readonly userNicknameIndex = new Map<string, string>();
 	private readonly rooms = new Map<string, RoomRecord>();
 	private readonly handReviews = new Map<string, HandReviewRecord>();
 	private readonly turnTimeoutSec = 15;
 	private readonly snapshotId = 'global-state-v1';
+	private timeoutTicker: NodeJS.Timeout | null = null;
 
 	private roomSeeded = false;
 
@@ -58,6 +64,20 @@ export class StoreService implements OnModuleInit {
 
 	async onModuleInit(): Promise<void> {
 		await this.hydrateFromSnapshot();
+		this.timeoutTicker = setInterval(() => {
+			for (const room of this.rooms.values()) {
+				if (room.status === RoomStatus.IN_HAND && room.gameState) {
+					this.autoResolveTimeout(room.id);
+				}
+			}
+		}, 1000);
+	}
+
+	onModuleDestroy(): void {
+		if (this.timeoutTicker) {
+			clearInterval(this.timeoutTicker);
+			this.timeoutTicker = null;
+		}
 	}
 
 	private snapshotPayload() {
@@ -89,8 +109,17 @@ export class StoreService implements OnModuleInit {
 			this.handReviews.clear();
 
 			for (const user of parsed.users ?? []) {
-				this.users.set(user.id, user);
-				this.userNicknameIndex.set(this.normalizeNickname(user.nickname), user.id);
+				const normalizedUser: UserRecord = {
+					...user,
+					balanceAmount: Number.isFinite(user.balanceAmount)
+						? user.balanceAmount
+						: this.defaultBalanceForRole(user.role),
+				};
+				this.users.set(normalizedUser.id, normalizedUser);
+				this.userNicknameIndex.set(
+					this.normalizeNickname(normalizedUser.nickname),
+					normalizedUser.id,
+				);
 			}
 			for (const room of parsed.rooms ?? []) {
 				this.rooms.set(room.id, room);
@@ -122,6 +151,12 @@ export class StoreService implements OnModuleInit {
 		return nickname.trim().toLowerCase();
 	}
 
+	private defaultBalanceForRole(role: UserRole): number {
+		return role === UserRole.GUEST
+			? DEFAULT_GUEST_BALANCE
+			: DEFAULT_ACCOUNT_BALANCE;
+	}
+
 	findUserByNickname(nickname: string): UserRecord | null {
 		const key = this.normalizeNickname(nickname);
 		const id = this.userNicknameIndex.get(key);
@@ -148,6 +183,7 @@ export class StoreService implements OnModuleInit {
 			nickname: params.nickname.trim(),
 			passwordHash: params.passwordHash,
 			role: params.role,
+			balanceAmount: this.defaultBalanceForRole(params.role),
 			avatar: { ...DEFAULT_AVATAR },
 			stats: {
 				playedHands: 0,
@@ -285,6 +321,7 @@ export class StoreService implements OnModuleInit {
 		hostUserId: string;
 		hostDisplayName: string;
 		hostAvatar: AvatarConfig | null;
+		hostStackAmount: number;
 	}): RoomRecord {
 		const maxSeats = Math.min(Math.max(params.maxSeats, 2), 9);
 
@@ -311,7 +348,7 @@ export class StoreService implements OnModuleInit {
 			userId: params.hostUserId,
 			roleType: ParticipantType.HUMAN,
 			displayName: params.hostDisplayName,
-			stackAmount: 10000,
+			stackAmount: Math.max(0, Math.floor(params.hostStackAmount)),
 			currentBetAmount: 0,
 			folded: false,
 			allIn: false,
@@ -353,6 +390,7 @@ export class StoreService implements OnModuleInit {
 		userId: string;
 		displayName: string;
 		avatar: AvatarConfig | null;
+		stackAmount: number;
 	}): RoomRecord {
 		const room = this.ensureRoom(params.roomId);
 		if (room.status === RoomStatus.CLOSED) {
@@ -377,7 +415,7 @@ export class StoreService implements OnModuleInit {
 			userId: params.userId,
 			roleType: ParticipantType.HUMAN,
 			displayName: params.displayName,
-			stackAmount: 10000,
+			stackAmount: Math.max(0, Math.floor(params.stackAmount)),
 			currentBetAmount: 0,
 			folded: false,
 			allIn: false,
@@ -397,6 +435,7 @@ export class StoreService implements OnModuleInit {
 		userId: string;
 		displayName: string;
 		avatar: AvatarConfig | null;
+		stackAmount: number;
 	}): RoomRecord {
 		const room = this.ensureRoom(params.roomId);
 		this.assertRoomEditable(room);
@@ -419,7 +458,7 @@ export class StoreService implements OnModuleInit {
 			userId: params.userId,
 			roleType: ParticipantType.HUMAN,
 			displayName: params.displayName,
-			stackAmount: 10000,
+			stackAmount: Math.max(0, Math.floor(params.stackAmount)),
 			currentBetAmount: 0,
 			folded: false,
 			allIn: false,
@@ -597,6 +636,45 @@ export class StoreService implements OnModuleInit {
 		return room;
 	}
 
+	autoResolveTimeout(roomId: string): RoomRecord {
+		const room = this.ensureRoom(roomId);
+		const state = room.gameState;
+
+		if (!state || room.status !== RoomStatus.IN_HAND) {
+			return room;
+		}
+
+		if (!state.currentTurnSeatId || !state.actionTimerDeadline) {
+			return room;
+		}
+
+		const deadlineMs = Date.parse(state.actionTimerDeadline);
+		if (!Number.isFinite(deadlineMs) || deadlineMs > Date.now()) {
+			return room;
+		}
+
+		const actingSeat = this.ensureSeat(room, state.currentTurnSeatId);
+		const actor = actingSeat.participant;
+		if (!actor || actor.folded || actor.allIn) {
+			const nextSeatId = this.nextTurnSeatId(room, state.currentTurnSeatId);
+			state.currentTurnSeatId = nextSeatId;
+			state.actionTimerDeadline = nextSeatId
+				? new Date(Date.now() + this.turnTimeoutSec * 1000).toISOString()
+				: null;
+			this.markDirty();
+			return room;
+		}
+
+		const toCall = Math.max(state.maxBetAmount - actor.currentBetAmount, 0);
+		const autoAction = toCall > 0 ? ActionType.FOLD : ActionType.CHECK;
+
+		return this.applyPlayerAction({
+			roomId,
+			actorSeatId: actor.seatId,
+			action: autoAction,
+		});
+	}
+
 	private activePlayers(room: RoomRecord): PlayerState[] {
 		return room.seats
 			.map((seat) => seat.participant)
@@ -771,7 +849,8 @@ export class StoreService implements OnModuleInit {
 
 	applyPlayerAction(params: {
 		roomId: string;
-		actorUserId: string;
+		actorUserId?: string;
+		actorSeatId?: number;
 		action: ActionType;
 		amount?: number;
 	}): RoomRecord {
@@ -782,9 +861,14 @@ export class StoreService implements OnModuleInit {
 			throw new BadRequestException('현재 핸드 액션을 처리할 수 없는 상태입니다.');
 		}
 
-		const actingSeat = room.seats.find(
-			(seat) => seat.participant?.userId === params.actorUserId,
-		);
+		let actingSeat = null as RoomRecord['seats'][number] | null;
+		if (typeof params.actorSeatId === 'number') {
+			actingSeat = room.seats.find((seat) => seat.seatId === params.actorSeatId) ?? null;
+		} else if (params.actorUserId) {
+			actingSeat = room.seats.find(
+				(seat) => seat.participant?.userId === params.actorUserId,
+			) ?? null;
+		}
 		if (!actingSeat?.participant) {
 			throw new BadRequestException('현재 룸에 착석 중인 플레이어가 아닙니다.');
 		}
@@ -904,7 +988,14 @@ export class StoreService implements OnModuleInit {
 	}
 
 	syncTimer(roomId: string): { remainingMs: number; currentTurnSeatId: number | null } {
-		const room = this.getRoomWithGame(roomId);
+		const room = this.ensureRoom(roomId);
+		if (!room.gameState) {
+			return {
+				remainingMs: 0,
+				currentTurnSeatId: null,
+			};
+		}
+
 		const deadline = room.gameState?.actionTimerDeadline
 			? Date.parse(room.gameState.actionTimerDeadline)
 			: 0;

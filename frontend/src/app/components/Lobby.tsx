@@ -51,6 +51,7 @@ interface ProfileMeResponse {
   id: string;
   nickname: string;
   role: "guest" | "free" | "pro";
+  balanceAmount: number;
   avatar: ProfileAvatar;
   subscriptionActive: boolean;
   createdAt: string;
@@ -62,6 +63,88 @@ interface ProfileStatsResponse {
   biggestPot: number;
   totalProfit: number;
   winRate: number;
+}
+
+const AVATAR_TOP_OPTIONS = [
+  { value: "shortFlat", label: "Short Flat" },
+  { value: "shortCurly", label: "Short Curly" },
+  { value: "straight01", label: "Straight" },
+  { value: "longButNotTooLong", label: "Long" },
+  { value: "bob", label: "Bob" },
+  { value: "hat", label: "Hat" },
+  { value: "hijab", label: "Hijab" },
+  { value: "turban", label: "Turban" },
+];
+
+const AVATAR_OUTFIT_OPTIONS = [
+  { value: "hoodie", label: "Hoodie" },
+  { value: "blazerAndShirt", label: "Blazer Shirt" },
+  { value: "blazerAndSweater", label: "Blazer Sweater" },
+  { value: "graphicShirt", label: "Graphic Shirt" },
+  { value: "shirtCrewNeck", label: "Crew Neck" },
+  { value: "shirtVNeck", label: "V-Neck" },
+];
+
+const AVATAR_EYE_OPTIONS = [
+  { value: "default", label: "Default" },
+  { value: "happy", label: "Happy" },
+  { value: "wink", label: "Wink" },
+  { value: "surprised", label: "Surprised" },
+  { value: "squint", label: "Squint" },
+];
+
+const AVATAR_MOUTH_OPTIONS = [
+  { value: "smile", label: "Smile" },
+  { value: "default", label: "Default" },
+  { value: "serious", label: "Serious" },
+  { value: "sad", label: "Sad" },
+  { value: "twinkle", label: "Twinkle" },
+];
+
+const AVATAR_FACE_OPTIONS = [
+  { value: "default", label: "Default" },
+  { value: "defaultNatural", label: "Natural" },
+  { value: "raisedExcited", label: "Raised" },
+  { value: "sadConcerned", label: "Concerned" },
+  { value: "upDown", label: "Up/Down" },
+];
+
+const AVATAR_SKIN_COLORS = ["ffdbb4", "edb98a", "d08b5b", "ae5d29", "614335", "fd9841", "f8d25c"];
+const AVATAR_HAIR_COLORS = ["2c1b18", "a55728", "724133", "d6b370", "c93305", "f59797", "e8e1e1"];
+
+const LEGACY_HAIR_COLOR_MAP: Record<string, string> = {
+  black: "2c1b18",
+  blonde: "d6b370",
+  brown: "724133",
+  red: "c93305",
+  pastelpink: "f59797",
+  platinum: "e8e1e1",
+};
+
+const HEX_COLOR_REGEX = /^[a-fA-F0-9]{6}$/;
+
+function hasOption(options: Array<{ value: string }>, value: string) {
+  return options.some((option) => option.value === value);
+}
+
+function normalizeAvatarValue(avatar: ProfileAvatar) {
+  const legacyHair = LEGACY_HAIR_COLOR_MAP[avatar.hairColor.toLowerCase()];
+  const normalizedHair = HEX_COLOR_REGEX.test(avatar.hairColor)
+    ? avatar.hairColor.toLowerCase()
+    : legacyHair ?? "2c1b18";
+  const normalizedSkin = HEX_COLOR_REGEX.test(avatar.skinTone)
+    ? avatar.skinTone.toLowerCase()
+    : "ffdbb4";
+
+  return {
+    top: hasOption(AVATAR_TOP_OPTIONS, avatar.hairStyle) ? avatar.hairStyle : "shortFlat",
+    skinColor: AVATAR_SKIN_COLORS.includes(normalizedSkin) ? normalizedSkin : "ffdbb4",
+    hairColor: AVATAR_HAIR_COLORS.includes(normalizedHair) ? normalizedHair : "2c1b18",
+    face: hasOption(AVATAR_FACE_OPTIONS, avatar.faceType) ? avatar.faceType : "default",
+    clothing: hasOption(AVATAR_OUTFIT_OPTIONS, avatar.outfit) ? avatar.outfit : "hoodie",
+    mouth: hasOption(AVATAR_MOUTH_OPTIONS, avatar.mouthType) ? avatar.mouthType : "smile",
+    eyes: hasOption(AVATAR_EYE_OPTIONS, avatar.eyeType) ? avatar.eyeType : "default",
+  };
 }
 
 const fallbackTournamentTables: LobbyTableItem[] = [
@@ -112,9 +195,9 @@ export function Lobby() {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [profileTab, setProfileTab] = useState<"stats" | "avatar" | "settings">("stats");
   const [avatarOptions, setAvatarOptions] = useState({
-    top: "shortHairShortFlat",
+    top: "shortFlat",
     skinColor: "ffdbb4",
-    hairColor: "black",
+    hairColor: "2c1b18",
     face: "default",
     clothing: "hoodie",
     mouth: "smile",
@@ -134,7 +217,7 @@ export function Lobby() {
   });
   const [profileBusy, setProfileBusy] = useState(false);
   
-  const { isLoggedIn, isPro, userName } = getCurrentAuth();
+  const { isLoggedIn, isPro, userName, balanceAmount } = getCurrentAuth();
 
   const navigateToRoom = (roomId: string, state?: Record<string, unknown>) => {
     const query = new URLSearchParams({ roomId }).toString();
@@ -147,15 +230,7 @@ export function Lobby() {
   };
 
   const applyAvatarOptions = (avatar: ProfileAvatar) => {
-    setAvatarOptions({
-      top: avatar.hairStyle,
-      skinColor: avatar.skinTone,
-      hairColor: avatar.hairColor,
-      face: avatar.faceType,
-      clothing: avatar.outfit,
-      mouth: avatar.mouthType,
-      eyes: avatar.eyeType,
-    });
+    setAvatarOptions(normalizeAvatarValue(avatar));
   };
 
   const loadProfile = async () => {
@@ -266,6 +341,12 @@ export function Lobby() {
   }, []);
 
   useEffect(() => {
+    if (isLoggedIn) {
+      void loadProfile();
+    }
+  }, [isLoggedIn]);
+
+  useEffect(() => {
     if (showProfileModal && isLoggedIn) {
       void loadProfile();
     }
@@ -315,6 +396,7 @@ export function Lobby() {
         mode: table.type,
         table,
         spectate: true,
+        allowStartControl: false,
       });
       return;
     }
@@ -329,6 +411,7 @@ export function Lobby() {
           mode: table.type,
           table,
           spectate: false,
+          allowStartControl: false,
         });
       } catch (error) {
         alert(error instanceof Error ? error.message : "테이블 입장에 실패했습니다.");
@@ -370,6 +453,7 @@ export function Lobby() {
 
       navigateToRoom(result.roomId, {
         mode: id === "ai-bot" ? "bot" : id,
+        allowStartControl: false,
       });
     } catch (error) {
       alert(error instanceof Error ? error.message : "퀵플레이 연결에 실패했습니다.");
@@ -379,6 +463,19 @@ export function Lobby() {
   const tournaments = tables.filter((t) => t.type === "tournament");
   const cashGames = tables.filter((t) => t.type === "cash");
   const botGames = tables.filter((t) => t.type === "bot");
+  const walletAmount = isLoggedIn
+    ? (profileMe?.balanceAmount ?? balanceAmount)
+    : 1000;
+  const avatarSeed = isLoggedIn ? (profileMe?.nickname ?? userName) : "Guest";
+  const avatarPreviewUrl =
+    `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(avatarSeed)}` +
+    `&top=${encodeURIComponent(avatarOptions.top)}` +
+    `&skinColor=${encodeURIComponent(avatarOptions.skinColor)}` +
+    `&hairColor=${encodeURIComponent(avatarOptions.hairColor)}` +
+    `&clothing=${encodeURIComponent(avatarOptions.clothing)}` +
+    `&mouth=${encodeURIComponent(avatarOptions.mouth)}` +
+    `&eyes=${encodeURIComponent(avatarOptions.eyes)}` +
+    `&eyebrows=${encodeURIComponent(avatarOptions.face)}`;
 
   return (
     <div className="flex flex-col w-full h-full bg-[#1A1B41] font-sans text-white relative overflow-hidden select-none">
@@ -419,7 +516,7 @@ export function Lobby() {
             className="flex items-center bg-gradient-to-r from-yellow-600 to-yellow-500 rounded-full pr-2 pl-2 py-1 shadow-lg border border-yellow-400 cursor-pointer hover:scale-105 transition-transform"
           >
             <Coins className="w-5 h-5 text-white mr-2" />
-            <span className="font-black text-lg text-white">$10,420</span>
+            <span className="font-black text-lg text-white">${walletAmount.toLocaleString()}</span>
             <button className="ml-3 bg-green-500 hover:bg-green-400 p-1 rounded-full shadow-inner transition">
               <Plus className="w-4 h-4 text-white" />
             </button>
@@ -782,6 +879,7 @@ export function Lobby() {
                        void loadTables();
                        navigateToRoom(created.id, {
                          mode: created.type === "ai_bot" ? "bot" : created.type,
+                         allowStartControl: true,
                        });
                      } catch (error) {
                        alert(error instanceof Error ? error.message : "테이블 생성에 실패했습니다.");
@@ -847,6 +945,7 @@ export function Lobby() {
                       setJoinCode("");
                       navigateToRoom(room.id, {
                         mode: room.type === "ai_bot" ? "bot" : room.type,
+                        allowStartControl: false,
                       });
                     } catch (error) {
                       alert(error instanceof Error ? error.message : "코드 입장에 실패했습니다.");
@@ -913,6 +1012,7 @@ export function Lobby() {
                           mode: "tournament",
                           spectate: true,
                           tournamentTable: tbl.id,
+                          allowStartControl: false,
                         });
                       }}
                       className="bg-[#11122D] border border-white/10 hover:border-purple-500/50 p-4 rounded-xl cursor-pointer group transition-all relative overflow-hidden"
@@ -969,7 +1069,7 @@ export function Lobby() {
               </div>
               <div className="p-4 md:p-6 flex flex-col items-center">
                  <div className="w-24 h-24 rounded-full bg-slate-800 border-4 border-cyan-500 overflow-hidden mb-4 shadow-[0_0_15px_rgba(6,182,212,0.5)]">
-                   <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${isLoggedIn ? (profileMe?.nickname ?? userName) : "Guest"}&top=${avatarOptions.top}&skinColor=${avatarOptions.skinColor}&hairColor=${avatarOptions.hairColor}&clothing=${avatarOptions.clothing}&mouth=${avatarOptions.mouth}&eyes=${avatarOptions.eyes}`} alt="avatar" />
+                   <img src={avatarPreviewUrl} alt="avatar" />
                  </div>
                  <h2 className="text-2xl font-black">{isLoggedIn ? (profileMe?.nickname ?? userName) : "Guest_1092"}</h2>
                  <p className="text-cyan-400 font-bold text-sm mb-6 uppercase tracking-widest">{isLoggedIn ? ((profileMe?.role ?? (isPro ? "pro" : "free")) === "pro" ? "PRO Member" : "FREE User") : "Guest"}</p>
@@ -1016,69 +1116,121 @@ export function Lobby() {
                  )}
 
                  {isLoggedIn && profileTab === "avatar" && (
-                   <div className="w-full flex flex-col gap-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                     <div className="flex flex-col gap-1">
+                   <div className="w-full flex flex-col gap-4 max-h-[360px] overflow-y-auto pr-2 custom-scrollbar">
+                     <div className="flex flex-col gap-2">
                        <label className="text-[10px] font-bold text-slate-400 uppercase">Hair / Hat</label>
-                       <select value={avatarOptions.top} onChange={e => setAvatarOptions(prev => ({...prev, top: e.target.value}))} className="w-full bg-[#11122D] border border-white/10 rounded-lg p-2.5 text-sm text-white font-bold outline-none focus:border-cyan-500">
-                         <option value="shortHairShortFlat">Short Flat</option>
-                         <option value="longHairStraight">Long Straight</option>
-                         <option value="eyepatch">Eyepatch</option>
-                         <option value="hat">Hat</option>
-                         <option value="hijab">Hijab</option>
-                         <option value="turban">Turban</option>
-                         <option value="winterHat1">Winter Hat</option>
-                       </select>
+                       <div className="grid grid-cols-2 gap-2">
+                         {AVATAR_TOP_OPTIONS.map((option) => (
+                           <button
+                             key={option.value}
+                             type="button"
+                             onClick={() => setAvatarOptions((prev) => ({ ...prev, top: option.value }))}
+                             className={`rounded-lg border px-2 py-2 text-xs font-bold transition ${avatarOptions.top === option.value ? "border-cyan-400 bg-cyan-500/20 text-cyan-200" : "border-white/10 bg-[#11122D] text-slate-300 hover:border-cyan-500/40"}`}
+                           >
+                             {option.label}
+                           </button>
+                         ))}
+                       </div>
                      </div>
-                     <div className="flex flex-col gap-1">
+
+                     <div className="flex flex-col gap-2">
                        <label className="text-[10px] font-bold text-slate-400 uppercase">Skin Color</label>
-                       <select value={avatarOptions.skinColor} onChange={e => setAvatarOptions(prev => ({...prev, skinColor: e.target.value}))} className="w-full bg-[#11122D] border border-white/10 rounded-lg p-2.5 text-sm text-white font-bold outline-none focus:border-cyan-500">
-                         <option value="ffdbb4">Light</option>
-                         <option value="edb98a">Medium Light</option>
-                         <option value="d08b5b">Medium</option>
-                         <option value="ae5d29">Medium Dark</option>
-                         <option value="614335">Dark</option>
-                       </select>
+                       <div className="flex flex-wrap gap-2">
+                         {AVATAR_SKIN_COLORS.map((color) => (
+                           <button
+                             key={color}
+                             type="button"
+                             onClick={() => setAvatarOptions((prev) => ({ ...prev, skinColor: color }))}
+                             className={`h-7 w-7 rounded-full border-2 transition ${avatarOptions.skinColor === color ? "border-cyan-300 scale-110" : "border-white/25 hover:border-cyan-500/60"}`}
+                             style={{ backgroundColor: `#${color}` }}
+                             aria-label={`skin-${color}`}
+                           />
+                         ))}
+                       </div>
                      </div>
-                     <div className="flex flex-col gap-1">
+
+                     <div className="flex flex-col gap-2">
                        <label className="text-[10px] font-bold text-slate-400 uppercase">Hair Color</label>
-                       <select value={avatarOptions.hairColor} onChange={e => setAvatarOptions(prev => ({...prev, hairColor: e.target.value}))} className="w-full bg-[#11122D] border border-white/10 rounded-lg p-2.5 text-sm text-white font-bold outline-none focus:border-cyan-500">
-                         <option value="black">Black</option>
-                         <option value="blonde">Blonde</option>
-                         <option value="brown">Brown</option>
-                         <option value="platinum">Platinum</option>
-                         <option value="red">Red</option>
-                         <option value="pastelPink">Pink</option>
-                       </select>
+                       <div className="flex flex-wrap gap-2">
+                         {AVATAR_HAIR_COLORS.map((color) => (
+                           <button
+                             key={color}
+                             type="button"
+                             onClick={() => setAvatarOptions((prev) => ({ ...prev, hairColor: color }))}
+                             className={`h-7 w-7 rounded-full border-2 transition ${avatarOptions.hairColor === color ? "border-cyan-300 scale-110" : "border-white/25 hover:border-cyan-500/60"}`}
+                             style={{ backgroundColor: `#${color}` }}
+                             aria-label={`hair-${color}`}
+                           />
+                         ))}
+                       </div>
                      </div>
-                     <div className="flex flex-col gap-1">
+
+                     <div className="flex flex-col gap-2">
                        <label className="text-[10px] font-bold text-slate-400 uppercase">Clothing</label>
-                       <select value={avatarOptions.clothing} onChange={e => setAvatarOptions(prev => ({...prev, clothing: e.target.value}))} className="w-full bg-[#11122D] border border-white/10 rounded-lg p-2.5 text-sm text-white font-bold outline-none focus:border-cyan-500">
-                         <option value="blazerAndShirt">Blazer & Shirt</option>
-                         <option value="blazerAndSweater">Blazer & Sweater</option>
-                         <option value="hoodie">Hoodie</option>
-                         <option value="overall">Overall</option>
-                         <option value="shirtCrewNeck">Crew Neck Shirt</option>
-                       </select>
-                     </div>
-                     <div className="grid grid-cols-2 gap-2">
-                       <div className="flex flex-col gap-1">
-                         <label className="text-[10px] font-bold text-slate-400 uppercase">Face</label>
-                         <select value={avatarOptions.eyes} onChange={e => setAvatarOptions(prev => ({...prev, eyes: e.target.value}))} className="w-full bg-[#11122D] border border-white/10 rounded-lg p-2 text-sm text-white font-bold outline-none focus:border-cyan-500">
-                           <option value="default">Default</option>
-                           <option value="happy">Happy</option>
-                           <option value="surprised">Surprised</option>
-                         </select>
+                       <div className="grid grid-cols-2 gap-2">
+                         {AVATAR_OUTFIT_OPTIONS.map((option) => (
+                           <button
+                             key={option.value}
+                             type="button"
+                             onClick={() => setAvatarOptions((prev) => ({ ...prev, clothing: option.value }))}
+                             className={`rounded-lg border px-2 py-2 text-xs font-bold transition ${avatarOptions.clothing === option.value ? "border-cyan-400 bg-cyan-500/20 text-cyan-200" : "border-white/10 bg-[#11122D] text-slate-300 hover:border-cyan-500/40"}`}
+                           >
+                             {option.label}
+                           </button>
+                         ))}
                        </div>
-                       <div className="flex flex-col gap-1">
+                     </div>
+
+                     <div className="grid grid-cols-2 gap-3">
+                       <div className="flex flex-col gap-2">
+                         <label className="text-[10px] font-bold text-slate-400 uppercase">Eyes</label>
+                         <div className="flex flex-col gap-2">
+                           {AVATAR_EYE_OPTIONS.map((option) => (
+                             <button
+                               key={option.value}
+                               type="button"
+                               onClick={() => setAvatarOptions((prev) => ({ ...prev, eyes: option.value }))}
+                               className={`rounded-lg border px-2 py-2 text-xs font-bold transition ${avatarOptions.eyes === option.value ? "border-cyan-400 bg-cyan-500/20 text-cyan-200" : "border-white/10 bg-[#11122D] text-slate-300 hover:border-cyan-500/40"}`}
+                             >
+                               {option.label}
+                             </button>
+                           ))}
+                         </div>
+                       </div>
+                       <div className="flex flex-col gap-2">
                          <label className="text-[10px] font-bold text-slate-400 uppercase">Mouth</label>
-                         <select value={avatarOptions.mouth} onChange={e => setAvatarOptions(prev => ({...prev, mouth: e.target.value}))} className="w-full bg-[#11122D] border border-white/10 rounded-lg p-2 text-sm text-white font-bold outline-none focus:border-cyan-500">
-                           <option value="smile">Smile</option>
-                           <option value="sad">Sad</option>
-                           <option value="serious">Serious</option>
-                         </select>
+                         <div className="flex flex-col gap-2">
+                           {AVATAR_MOUTH_OPTIONS.map((option) => (
+                             <button
+                               key={option.value}
+                               type="button"
+                               onClick={() => setAvatarOptions((prev) => ({ ...prev, mouth: option.value }))}
+                               className={`rounded-lg border px-2 py-2 text-xs font-bold transition ${avatarOptions.mouth === option.value ? "border-cyan-400 bg-cyan-500/20 text-cyan-200" : "border-white/10 bg-[#11122D] text-slate-300 hover:border-cyan-500/40"}`}
+                             >
+                               {option.label}
+                             </button>
+                           ))}
+                         </div>
                        </div>
                      </div>
-                     <button onClick={() => { void saveAvatar(); }} disabled={profileBusy} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-lg transition shadow-md w-full mt-2 disabled:opacity-50">
+
+                     <div className="flex flex-col gap-2">
+                       <label className="text-[10px] font-bold text-slate-400 uppercase">Eyebrows</label>
+                       <div className="grid grid-cols-2 gap-2">
+                         {AVATAR_FACE_OPTIONS.map((option) => (
+                           <button
+                             key={option.value}
+                             type="button"
+                             onClick={() => setAvatarOptions((prev) => ({ ...prev, face: option.value }))}
+                             className={`rounded-lg border px-2 py-2 text-xs font-bold transition ${avatarOptions.face === option.value ? "border-cyan-400 bg-cyan-500/20 text-cyan-200" : "border-white/10 bg-[#11122D] text-slate-300 hover:border-cyan-500/40"}`}
+                           >
+                             {option.label}
+                           </button>
+                         ))}
+                       </div>
+                     </div>
+
+                     <button onClick={() => { void saveAvatar(); }} disabled={profileBusy} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-lg transition shadow-md w-full mt-1 disabled:opacity-50">
                        Save Avatar
                      </button>
                    </div>

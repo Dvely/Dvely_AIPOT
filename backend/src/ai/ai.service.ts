@@ -86,7 +86,7 @@ export class AiService {
 		if (provider === LlmProvider.GEMINI) {
 			return this.configService.get('GEMINI_MODEL', 'gemini-1.5-pro');
 		}
-		return this.configService.get('LOCAL_LLM_MODEL', 'local-default');
+		return this.configService.get('LOCAL_LLM_MODEL', 'qwen2.5-coder:3b');
 	}
 
 	private async callOpenAICompatible(options: {

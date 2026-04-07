@@ -6,6 +6,7 @@ interface AuthSnapshot {
   isLoggedIn: boolean;
   isPro: boolean;
   userName: string;
+  balanceAmount: number;
 }
 
 interface AuthResult {
@@ -18,6 +19,7 @@ interface AuthApiUser {
   nickname: string;
   role: string;
   guest: boolean;
+  balanceAmount?: number;
 }
 
 interface AuthApiResponse {
@@ -31,6 +33,7 @@ interface StoredSessionUser {
   nickname: string;
   role: AuthRole;
   guest: boolean;
+  balanceAmount: number;
 }
 
 const ACCESS_TOKEN_KEY = "aipot_access_token";
@@ -67,6 +70,12 @@ function writeSession(session: AuthApiResponse) {
     nickname: session.user.nickname,
     role,
     guest: session.user.guest,
+    balanceAmount:
+      typeof session.user.balanceAmount === "number"
+        ? session.user.balanceAmount
+        : session.user.guest
+          ? 1000
+          : 10000,
   };
 
   localStorage.setItem(ACCESS_TOKEN_KEY, session.accessToken);
@@ -199,7 +208,13 @@ export function signOut() {
 export function getCurrentAuth(): AuthSnapshot {
   const user = readStoredUser();
   if (!user) {
-    return { role: "guest", isLoggedIn: false, isPro: false, userName: "Guest" };
+    return {
+      role: "guest",
+      isLoggedIn: false,
+      isPro: false,
+      userName: "Guest",
+      balanceAmount: 1000,
+    };
   }
 
   return {
@@ -207,6 +222,7 @@ export function getCurrentAuth(): AuthSnapshot {
     isLoggedIn: user.role !== "guest",
     isPro: user.role === "pro",
     userName: user.nickname,
+    balanceAmount: typeof user.balanceAmount === "number" ? user.balanceAmount : user.role === "guest" ? 1000 : 10000,
   };
 }
 

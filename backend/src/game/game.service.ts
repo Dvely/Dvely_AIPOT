@@ -8,7 +8,7 @@ export class GameService {
 	constructor(private readonly store: StoreService) {}
 
 	getState(roomId: string) {
-		const room = this.store.getRoomWithGame(roomId);
+		const room = this.store.autoResolveTimeout(roomId);
 		return {
 			roomId: room.id,
 			roomStatus: room.status,
@@ -31,6 +31,7 @@ export class GameService {
 	}
 
 	timerSync(roomId: string) {
+		this.store.autoResolveTimeout(roomId);
 		return this.store.syncTimer(roomId);
 	}
 

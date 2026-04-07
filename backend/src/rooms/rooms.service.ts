@@ -23,7 +23,7 @@ export class RoomsService {
 
 	private getUserProfile(user: JwtUserPayload) {
 		if (user.guest) {
-			return { displayName: user.nickname, avatar: null };
+			return { displayName: user.nickname, avatar: null, stackAmount: 1000 };
 		}
 
 		const account = this.usersService.findById(user.sub);
@@ -34,6 +34,7 @@ export class RoomsService {
 		return {
 			displayName: account.nickname,
 			avatar: account.avatar,
+			stackAmount: account.balanceAmount,
 		};
 	}
 
@@ -51,10 +52,12 @@ export class RoomsService {
 			hostUserId: user.sub,
 			hostDisplayName: profile.displayName,
 			hostAvatar: profile.avatar,
+			hostStackAmount: profile.stackAmount,
 		});
 	}
 
 	getRoom(roomId: string) {
+		this.store.autoResolveTimeout(roomId);
 		return this.store.getRoomDetail(roomId);
 	}
 
@@ -70,6 +73,7 @@ export class RoomsService {
 			userId: user.sub,
 			displayName: profile.displayName,
 			avatar: profile.avatar,
+			stackAmount: profile.stackAmount,
 		});
 	}
 
@@ -88,6 +92,7 @@ export class RoomsService {
 			userId: user.sub,
 			displayName: profile.displayName,
 			avatar: profile.avatar,
+			stackAmount: profile.stackAmount,
 		});
 	}
 
@@ -122,6 +127,7 @@ export class RoomsService {
 			userId: user.sub,
 			displayName: profile.displayName,
 			avatar: profile.avatar,
+			stackAmount: profile.stackAmount,
 		});
 	}
 

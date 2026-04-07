@@ -33,6 +33,7 @@ export interface UserRecord {
   nickname: string;
   passwordHash: string;
   role: UserRole;
+  balanceAmount: number;
   avatar: AvatarConfig;
   stats: UserStats;
   subscriptionActive: boolean;

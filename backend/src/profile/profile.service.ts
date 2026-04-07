@@ -28,6 +28,7 @@ export class ProfileService {
 			id: account.id,
 			nickname: account.nickname,
 			role: account.role,
+			balanceAmount: account.balanceAmount,
 			avatar: account.avatar,
 			subscriptionActive: account.subscriptionActive,
 			createdAt: account.createdAt,

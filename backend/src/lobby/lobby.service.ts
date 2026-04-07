@@ -44,6 +44,7 @@ export class LobbyService {
 			userId: user.sub,
 			displayName: user.nickname,
 			avatar: userEntity?.avatar ?? null,
+			stackAmount: user.guest ? 1000 : (userEntity?.balanceAmount ?? 10000),
 		});
 
 		return {

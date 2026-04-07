@@ -22,6 +22,7 @@ export interface AuthResult {
 		nickname: string;
 		role: UserRole;
 		guest: boolean;
+		balanceAmount: number;
 	};
 }
 
@@ -69,7 +70,7 @@ export class AuthService {
 		return this.jwtService.sign(payload);
 	}
 
-	private toAuthResult(payload: JwtUserPayload): AuthResult {
+	private toAuthResult(payload: JwtUserPayload, balanceAmount: number): AuthResult {
 		return {
 			accessToken: this.signPayload(payload),
 			tokenType: 'Bearer',
@@ -78,6 +79,7 @@ export class AuthService {
 				nickname: payload.nickname,
 				role: payload.role,
 				guest: payload.guest,
+				balanceAmount,
 			},
 		};
 	}
@@ -89,7 +91,7 @@ export class AuthService {
 			role: UserRole.FREE,
 		});
 
-		return this.toAuthResult(this.buildPayload(newUser));
+		return this.toAuthResult(this.buildPayload(newUser), newUser.balanceAmount);
 	}
 
 	async signIn(dto: SignInDto): Promise<AuthResult> {
@@ -103,7 +105,7 @@ export class AuthService {
 			throw new UnauthorizedException('아이디 또는 비밀번호가 올바르지 않습니다.');
 		}
 
-		return this.toAuthResult(this.buildPayload(user));
+		return this.toAuthResult(this.buildPayload(user), user.balanceAmount);
 	}
 
 	createGuestSession(dto: GuestSessionDto): AuthResult {
@@ -115,7 +117,7 @@ export class AuthService {
 			guest: true,
 		};
 
-		return this.toAuthResult(guestPayload);
+		return this.toAuthResult(guestPayload, 1000);
 	}
 
 	getMe(payload: JwtUserPayload) {
@@ -125,6 +127,7 @@ export class AuthService {
 				nickname: payload.nickname,
 				role: payload.role,
 				guest: true,
+				balanceAmount: 1000,
 			};
 		}
 
@@ -138,6 +141,7 @@ export class AuthService {
 			nickname: user.nickname,
 			role: user.role,
 			guest: false,
+			balanceAmount: user.balanceAmount,
 			avatar: user.avatar,
 			stats: user.stats,
 			subscriptionActive: user.subscriptionActive,

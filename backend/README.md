@@ -63,6 +63,7 @@ npm run start:dev
 - 로컬 서버 프로젝트: https://github.com/Dvely/Dvely_LLMserver
 - 현재 백엔드는 OpenAI-compatible chat/completions 형태를 기본 호출 형식으로 사용합니다.
 - LOCAL_LLM_BASE_URL 을 로컬 서버 엔드포인트로 맞춰주세요.
+- Dvely_LLMserver README 기준 기본 모델 예시: `qwen2.5-coder:3b`, `exaone-deep:2.4b`
 
 ## 주요 API 그룹
 
