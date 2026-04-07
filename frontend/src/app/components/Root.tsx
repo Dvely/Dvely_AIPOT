@@ -8,7 +8,7 @@ const PHONE_MAX_LONG_EDGE = 1000;
 const MOBILE_DESKTOP_VIEWPORT_WIDTH = 1366;
 
 const DEFAULT_VIEWPORT_CONTENT = "width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content";
-const LANDSCAPE_VIEWPORT_CONTENT = `width=${MOBILE_DESKTOP_VIEWPORT_WIDTH}, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content`;
+const LANDSCAPE_VIEWPORT_CONTENT = `width=${MOBILE_DESKTOP_VIEWPORT_WIDTH}, viewport-fit=cover, interactive-widget=overlays-content`;
 
 function isPhoneDevice() {
   const shortEdge = Math.min(window.screen.width, window.screen.height);
