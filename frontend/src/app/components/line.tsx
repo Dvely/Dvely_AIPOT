@@ -1,0 +1,1 @@
+                  const botCards: Record<string, [string, string]> = { p1: ["7♥", "7♦"], p2: ["2♠", "2♦"], p3: ["9♠", "8♠"] };

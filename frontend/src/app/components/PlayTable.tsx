@@ -1,0 +1,1079 @@
+import { useLocation, useNavigate } from "react-router";
+import { useEffect, useState } from "react";
+import { ArrowLeft, MessageCircle, Settings, Users, Info, Trophy, Clock, Coins, Target, X, Plus } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+
+type Position = number; // Used as seat index
+type Role = "BTN" | "SB" | "BB" | "UTG" | "MP" | "HJ" | "CO" | "UTG+1";
+type GamePhase = "init" | "dealing" | "preflop" | "flop_deal" | "flop" | "turn_deal" | "turn" | "river_deal" | "river" | "showdown";
+
+interface Player {
+  id: string;
+  name: string;
+  pos: Position;
+  role: Role;
+  avatarSeed: string;
+  chips: number;
+  bet: number;
+  status: "active" | "folded";
+  cardsDealt: boolean;
+}
+
+const getInitialPlayers = (count: number, max: number): Player[] => {
+  const all: Player[] = [
+    { id: "hero", name: "YOU", pos: 0, role: "SB", avatarSeed: "You", chips: 10420, bet: 0, status: "active", cardsDealt: false },
+    { id: "p1", name: "AI Bot 1", pos: 1, role: "BB", avatarSeed: "Felix", chips: 12000, bet: 0, status: "active", cardsDealt: false },
+    { id: "p2", name: "AI Bot 2", pos: 2, role: "UTG", avatarSeed: "Aneka", chips: 9800, bet: 0, status: "active", cardsDealt: false },
+    { id: "p3", name: "AI Bot 3", pos: 3, role: "BTN", avatarSeed: "Oliver", chips: 8500, bet: 0, status: "active", cardsDealt: false },
+    { id: "p4", name: "AI Bot 4", pos: 4, role: "MP", avatarSeed: "Jasper", chips: 11000, bet: 0, status: "active", cardsDealt: false },
+    { id: "p5", name: "AI Bot 5", pos: 5, role: "HJ", avatarSeed: "Zoe", chips: 9200, bet: 0, status: "active", cardsDealt: false },
+    { id: "p6", name: "AI Bot 6", pos: 6, role: "CO", avatarSeed: "Luna", chips: 10500, bet: 0, status: "active", cardsDealt: false },
+    { id: "p7", name: "AI Bot 7", pos: 7, role: "UTG+1", avatarSeed: "Max", chips: 8800, bet: 0, status: "active", cardsDealt: false },
+    { id: "p8", name: "AI Bot 8", pos: 8, role: "UTG+2", avatarSeed: "Leo", chips: 9500, bet: 0, status: "active", cardsDealt: false },
+  ];
+  
+  if (count === 4 && max === 4) {
+      // Keep hardcoded positions for 4-player classic layout
+      return [
+        { id: "p1", name: "AI Bot 1", pos: 2, role: "UTG", avatarSeed: "Felix", chips: 12000, bet: 0, status: "active", cardsDealt: false },
+        { id: "p2", name: "AI Bot 2", pos: 1, role: "BB", avatarSeed: "Aneka", chips: 9800, bet: 0, status: "active", cardsDealt: false },
+        { id: "p3", name: "AI Bot 3", pos: 3, role: "BTN", avatarSeed: "Oliver", chips: 8500, bet: 0, status: "active", cardsDealt: false },
+        { id: "hero", name: "YOU", pos: 0, role: "SB", avatarSeed: "You", chips: 10420, bet: 0, status: "active", cardsDealt: false },
+      ];
+  }
+  
+  const actualCount = Math.min(count, max, 9);
+  const selected = all.slice(0, actualCount);
+  
+  // Distribute players evenly around the table if it's not fully packed
+  return selected.map((p, idx) => ({ ...p, pos: Math.floor(idx * (max / actualCount)) }));
+};
+
+const FULL_COMMUNITY_CARDS = ["Q♠", "J♠", "10♠", "2♥", "5♣"];
+const HERO_CARDS = ["A♠", "K♠"];
+
+function ChipStack({ amount }: { amount: number }) {
+  if (amount <= 0) return null;
+  const numChips = Math.min(6, Math.ceil(amount / 50));
+  
+  return (
+    <div className="relative w-8 h-8 flex flex-col items-center justify-center animate-in zoom-in duration-300">
+      {Array.from({ length: numChips }).map((_, i) => (
+        <div
+          key={i}
+          className="absolute w-5 h-5 md:w-6 md:h-6 rounded-full border border-dashed border-white/50 bg-yellow-500 shadow-md"
+          style={{ bottom: i * 4, zIndex: i }}
+        />
+      ))}
+      <div className="absolute -bottom-5 bg-black/80 px-2 py-0.5 rounded-full text-[10px] md:text-xs font-black text-white whitespace-nowrap z-20 border border-white/10">
+        ${amount}
+      </div>
+    </div>
+  );
+}
+
+function TimerRing({ isActive, duration = 15 }: { isActive: boolean; duration?: number }) {
+  const [timeLeft, setTimeLeft] = useState(duration);
+
+  useEffect(() => {
+    if (!isActive) return;
+    setTimeLeft(duration);
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => (prev > 0 ? prev - 0.1 : 0));
+    }, 100);
+    return () => clearInterval(interval);
+  }, [isActive, duration]);
+
+  if (!isActive) return null;
+
+  const radius = 46;
+  const circumference = 2 * Math.PI * radius;
+  const progress = (timeLeft / duration) * circumference;
+  const isDanger = timeLeft <= 5;
+
+  return (
+    <svg className="absolute -inset-[6px] w-[calc(100%+12px)] h-[calc(100%+12px)] -rotate-90 pointer-events-none z-0">
+      <circle cx="50%" cy="50%" r={radius} fill="transparent" stroke="rgba(0,0,0,0.5)" strokeWidth="6" />
+      <circle
+        cx="50%" cy="50%" r={radius} fill="transparent"
+        stroke={isDanger ? "#EF4444" : "#06B6D4"}
+        strokeWidth="6" strokeDasharray={circumference} strokeDashoffset={circumference - progress}
+        strokeLinecap="round" className="transition-all duration-100 ease-linear"
+      />
+    </svg>
+  );
+}
+
+export function PlayTable() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  
+  const isTournament = location.state?.mode === "tournament";
+  const isSpectatingStart = location.state?.spectate === true;
+  const numPlayers = location.state?.table?.players || 4;
+  const maxPlayers = location.state?.table?.max || numPlayers;
+  
+  const [phase, setPhase] = useState<GamePhase>("init");
+  const [players, setPlayers] = useState<Player[]>(() => getInitialPlayers(numPlayers, maxPlayers));
+  const [gameStarted, setGameStarted] = useState(false);
+  const [activeTurn, setActiveTurn] = useState<string | null>(null);
+  const [selectedSeat, setSelectedSeat] = useState<number | null>(null);
+  const [pot, setPot] = useState(0);
+  const [communityCards, setCommunityCards] = useState<string[]>([]);
+  const [log, setLog] = useState<string>("Waiting to start...");
+  const [heroEquity, setHeroEquity] = useState<number | null>(null);
+  const [winner, setWinner] = useState<string | null>(null);
+  const [winningCards, setWinningCards] = useState<string[]>([]);
+  const [winningHandRank, setWinningHandRank] = useState<string | null>(null);
+
+  // Raise Action State
+  const [isRaising, setIsRaising] = useState(false);
+  const [raiseAmount, setRaiseAmount] = useState<string>("");
+
+  // Manage user sitting status
+  const [userState, setUserState] = useState<"playing" | "spectating" | "waiting" | "eliminated">(isSpectatingStart ? "spectating" : "playing");
+
+  // Tournament States
+  const [tourneyPlayersLeft, setTourneyPlayersLeft] = useState(100);
+  const [tourneyStage, setTourneyStage] = useState<"Starting Table" | "In The Money (ITM)" | "Semi-Final Table" | "Final Table">("Starting Table");
+  const [isTableBreaking, setIsTableBreaking] = useState(false);
+  const [nextStageName, setNextStageName] = useState("");
+
+  useEffect(() => {
+    if (!isTournament) return;
+    let newStage = tourneyStage;
+    if (tourneyPlayersLeft <= 9) newStage = "Final Table";
+    else if (tourneyPlayersLeft <= 18) newStage = "Semi-Final Table";
+    else if (tourneyPlayersLeft <= 36) newStage = "In The Money (ITM)";
+    else newStage = "Starting Table";
+
+    if (newStage !== tourneyStage) {
+       setNextStageName(newStage);
+       setIsTableBreaking(true);
+       setLog(`Table Breaking... Moving to ${newStage}`);
+       setTimeout(() => {
+          setTourneyStage(newStage as any);
+          setIsTableBreaking(false);
+          setLog(`Welcome to the ${newStage}!`);
+       }, 4000);
+    }
+  }, [tourneyPlayersLeft, tourneyStage, isTournament]);
+
+  useEffect(() => {
+    // Hide Hero's cards if spectating initially
+    if (userState !== "playing" && phase === "init") {
+       setPlayers(prev => prev.map(p => p.id === "hero" ? { ...p, status: "folded" } : p));
+    }
+  }, [userState, phase]);
+
+  useEffect(() => {
+    let timeout: NodeJS.Timeout;
+
+    if (phase === "init") {
+      setHeroEquity(null);
+      if (gameStarted) {
+        setLog(isTournament ? "Tournament starting..." : "Starting next hand...");
+        timeout = setTimeout(() => setPhase("dealing"), 1500);
+      } else {
+        setLog(isTournament ? "Tournament waiting to start..." : "Waiting to start...");
+      }
+    } 
+    else if (phase === "dealing") {
+      setLog("Dealing hole cards...");
+      const sequence = async () => {
+        for (let i = 0; i < players.length; i++) {
+          if (players[i].id === "hero" && userState !== "playing") continue; // Skip dealing to spectator
+          await new Promise(r => setTimeout(r, 400));
+          setPlayers(prev => prev.map((p, idx) => idx === i ? { ...p, cardsDealt: true } : p));
+        }
+        await new Promise(r => setTimeout(r, 800));
+        setPhase("preflop");
+      };
+      sequence();
+    }
+    else if (phase === "preflop") {
+      setHeroEquity(65);
+      setPlayers(prev => prev.map(p => {
+        if (p.id === "hero" && userState !== "playing") return p;
+        if (p.role === "SB") return { ...p, bet: 50, chips: p.chips - 50 };
+        if (p.role === "BB") return { ...p, bet: 100, chips: p.chips - 100 };
+        if (["p4", "p5", "p6", "p7"].includes(p.id)) return { ...p, status: "folded" };
+        return p;
+      }));
+      setPot(userState === "playing" ? 150 : 100); // adjust pot based on if SB (hero) posted blind
+      setLog("Pre-flop: Action is on UTG");
+      setActiveTurn("p1");
+
+      timeout = setTimeout(() => {
+        setLog("UTG (AI Bot 1) folds");
+        setPlayers(prev => prev.map(p => p.id === "p1" ? { ...p, status: "folded" } : p));
+        setActiveTurn("p3");
+        
+        setTimeout(() => {
+          setLog("BTN (AI Bot 3) calls 100");
+          setPlayers(prev => prev.map(p => p.id === "p3" ? { ...p, bet: 100, chips: p.chips - 100 } : p));
+          setPot(p => p + 100);
+
+          if (userState === "playing") {
+             setActiveTurn("hero");
+             setLog("Action is on YOU");
+          } else {
+             // Skip Hero completely if spectating
+             setLog("Action skipped (You are sitting out)");
+             setActiveTurn("p2");
+             setTimeout(() => {
+               setLog("BB checks");
+               setActiveTurn(null);
+               setTimeout(() => setPhase("flop_deal"), 1500);
+             }, 1500);
+          }
+        }, 2000);
+      }, 2000);
+    }
+    else if (phase === "flop_deal") {
+      setLog("Dealing Flop...");
+      setActiveTurn(null);
+      setPlayers(prev => prev.map(p => ({ ...p, bet: 0 })));
+      
+      const sequence = async () => {
+        for (let i = 0; i < 3; i++) {
+          await new Promise(r => setTimeout(r, 400));
+          setCommunityCards(FULL_COMMUNITY_CARDS.slice(0, i + 1));
+        }
+        await new Promise(r => setTimeout(r, 800));
+        setPhase("flop");
+      };
+      sequence();
+    }
+    else if (phase === "flop") {
+      setHeroEquity(99); // Royal Flush flopped
+      if (userState === "playing" && players.find(p => p.id === "hero")?.status !== "folded") {
+         setLog("Flop: Action is on YOU (SB)");
+         setActiveTurn("hero");
+      } else {
+         setLog("Flop: Action is on BB");
+         setActiveTurn("p2");
+         timeout = setTimeout(() => {
+             setLog("BB checks");
+             setActiveTurn("p3");
+             setTimeout(() => {
+                 setLog("BTN checks");
+                 setActiveTurn(null);
+                 setPhase("turn_deal");
+             }, 1500);
+         }, 1500);
+      }
+    }
+    else if (phase === "turn_deal") {
+      setLog("Dealing Turn...");
+      setActiveTurn(null);
+      setPlayers(prev => prev.map(p => ({ ...p, bet: 0 })));
+      setTimeout(() => {
+         setCommunityCards(FULL_COMMUNITY_CARDS.slice(0, 4));
+         setTimeout(() => setPhase("turn"), 800);
+      }, 400);
+    }
+    else if (phase === "turn") {
+      if (userState === "playing" && players.find(p => p.id === "hero")?.status !== "folded") {
+         setLog("Turn: Action is on YOU (SB)");
+         setActiveTurn("hero");
+      } else {
+         setLog("Turn: Action is on BB");
+         setActiveTurn("p2");
+         timeout = setTimeout(() => {
+             setLog("BB checks");
+             setActiveTurn("p3");
+             setTimeout(() => {
+                 setLog("BTN checks");
+                 setActiveTurn(null);
+                 setPhase("river_deal");
+             }, 1500);
+         }, 1500);
+      }
+    }
+    else if (phase === "river_deal") {
+      setLog("Dealing River...");
+      setActiveTurn(null);
+      setPlayers(prev => prev.map(p => ({ ...p, bet: 0 })));
+      setTimeout(() => {
+         setCommunityCards(FULL_COMMUNITY_CARDS.slice(0, 5));
+         setTimeout(() => setPhase("river"), 800);
+      }, 400);
+    }
+    else if (phase === "river") {
+      if (userState === "playing" && players.find(p => p.id === "hero")?.status !== "folded") {
+         setLog("River: Action is on YOU (SB)");
+         setActiveTurn("hero");
+      } else {
+         setLog("River: Action is on BB");
+         setActiveTurn("p2");
+         timeout = setTimeout(() => {
+             setLog("BB checks");
+             setActiveTurn("p3");
+             setTimeout(() => {
+                 setLog("BTN checks");
+                 setActiveTurn(null);
+                 setLog("Hand Complete. Analyzing...");
+                 setPhase("showdown");
+             }, 1500);
+         }, 1500);
+      }
+    }
+    else if (phase === "showdown") {
+       const heroFolded = players.find(p => p.id === "hero")?.status === "folded";
+       if (heroFolded) {
+           setLog("Showdown! BB wins!");
+           setWinner("p2");
+           setWinningCards(["2♠", "2♦", "2♥", "Q♠", "J♠"]);
+           setWinningHandRank("Three of a Kind, 2s");
+           setPlayers(prev => prev.map(p => p.id === "p2" ? { ...p, chips: p.chips + pot } : p));
+       } else {
+           setLog("Showdown! YOU win with Royal Flush");
+           setWinner("hero");
+           setWinningCards(["A♠", "K♠", "Q♠", "J♠", "10♠"]);
+           setWinningHandRank("Royal Flush");
+           setPlayers(prev => prev.map(p => p.id === "hero" ? { ...p, chips: p.chips + pot } : p));
+       }
+       setTimeout(() => {
+          resetHand();
+       }, 5000);
+    }
+
+    return () => clearTimeout(timeout);
+  }, [phase, isTournament, userState, gameStarted]);
+
+  // Handle Timeout (Auto fold or auto check)
+  useEffect(() => {
+    if (activeTurn !== "hero") return;
+    
+    // 15초 제한 시간
+    const timer = setTimeout(() => {
+      setLog("Time's up! Auto acting...");
+      if (phase === "preflop") {
+         // 프리플랍에서는 추가 베팅(Call 50)이 필요하므로 자동 FOLD
+         handleHeroAction("fold");
+      } else if (phase === "flop" || phase === "turn" || phase === "river") {
+         // 플랍, 턴, 리버에서는 추가 베팅이 필요 없으므로(0) 자동 CHECK
+         handleHeroAction("call");
+      }
+    }, 15000);
+
+    return () => clearTimeout(timer);
+  }, [activeTurn, phase]);
+
+  const resetHand = () => {
+    setLog("Hand Complete. Hand saved to Review Log.");
+    setTimeout(() => {
+      if (userState === "waiting") {
+        setUserState("playing");
+      }
+      if (isTournament) {
+        setTourneyPlayersLeft(prev => {
+           const drop = Math.floor(Math.random() * 5) + 1; // Drop 1-5 players
+           return Math.max(2, prev - drop);
+        });
+      }
+      setPhase("init");
+      setWinner(null);
+      setWinningCards([]);
+      setWinningHandRank(null);
+      setPlayers(prev => prev.map(p => ({
+        ...p,
+        status: (p.chips <= 0 && p.id === "hero") ? "folded" : "active",
+        bet: 0,
+        cardsDealt: false
+      })));
+      setPot(0);
+      setCommunityCards([]);
+      setActiveTurn(null);
+      setHeroEquity(null);
+      setIsRaising(false);
+      setRaiseAmount("");
+    }, 2500);
+  };
+
+  const handleHeroAction = (action: "fold" | "call" | "raise", amount?: number) => {
+    if (activeTurn !== "hero") return;
+
+    if (action === "raise") {
+      const raiseVal = amount || pot;
+      const isAllIn = raiseVal >= (players.find(p=>p.id==="hero")?.chips || 0);
+
+      setLog(`YOU ${isAllIn ? 'go ALL-IN!' : `raise to ${raiseVal}`}`);
+      setPlayers(prev => prev.map(p => p.id === "hero" ? { ...p, bet: p.bet + raiseVal, chips: Math.max(0, p.chips - raiseVal) } : p));
+      setPot(p => p + raiseVal);
+      setIsRaising(false);
+      setActiveTurn("p2");
+      
+      setTimeout(() => {
+        setLog("BB folds");
+        setActiveTurn("p3");
+        setTimeout(() => {
+          if (isAllIn) {
+             const win = Math.random() > 0.5; // 50% chance to win or lose the all-in mock
+             setCommunityCards(FULL_COMMUNITY_CARDS.slice(0, 5)); // Show all cards
+             setPhase("showdown");
+             if (win) {
+                setLog("BTN calls. Showdown! YOU WIN!");
+                setWinner("hero");
+                setWinningCards(["A♠", "K♠", "Q♠", "J♠", "10♠"]);
+                setWinningHandRank("Royal Flush");
+                setPlayers(prev => prev.map(p => p.id === "hero" ? { ...p, chips: p.chips + pot + raiseVal * 2 } : p));
+             } else {
+                setLog("BTN calls. Showdown! YOU LOST!");
+                setWinner("p3");
+                setWinningCards(["Q♠", "J♠", "10♠", "9♠", "8♠"]);
+                setWinningHandRank("Straight Flush");
+                setTimeout(() => setUserState("eliminated"), 4000);
+             }
+             setTimeout(() => {
+                setActiveTurn(null);
+                resetHand();
+             }, 5000);
+          } else {
+             setLog("BTN folds. YOU win!");
+             setWinner("hero");
+             setActiveTurn(null);
+             setTimeout(() => resetHand(), 3000);
+          }
+        }, 1500);
+      }, 1500);
+      return;
+    }
+
+    if (phase === "preflop") {
+      if (action === "fold") {
+        setLog("YOU fold. BB's turn...");
+        setPlayers(prev => prev.map(p => p.id === "hero" ? { ...p, status: "folded" } : p));
+        setActiveTurn("p2");
+        setTimeout(() => {
+          setLog("BB checks");
+          setActiveTurn("p3");
+          setTimeout(() => {
+             setLog("BTN checks");
+             setActiveTurn(null);
+             setPhase("flop_deal");
+          }, 1500);
+        }, 1500);
+      } else if (action === "call") {
+        setLog("YOU call 50");
+        setPlayers(prev => prev.map(p => p.id === "hero" ? { ...p, bet: p.bet + 50, chips: p.chips - 50 } : p));
+        setPot(p => p + 50);
+        setActiveTurn("p2");
+        
+        setTimeout(() => {
+          setLog("BB (AI Bot 2) checks");
+          setActiveTurn(null);
+          setTimeout(() => setPhase("flop_deal"), 1500);
+        }, 1500);
+      }
+    } else if (phase === "flop") {
+        if (action === "fold") {
+            setLog("YOU fold. BB's turn...");
+            setPlayers(prev => prev.map(p => p.id === "hero" ? { ...p, status: "folded" } : p));
+            setActiveTurn("p2");
+            setTimeout(() => {
+                setLog("BB checks");
+                setActiveTurn("p3");
+                setTimeout(() => {
+                   setLog("BTN checks");
+                   setActiveTurn(null);
+                   setPhase("turn_deal");
+                }, 1500);
+            }, 1500);
+        } else if (action === "call") {
+            setLog("YOU check");
+            setActiveTurn("p2");
+            setTimeout(() => {
+                setLog("BB checks");
+                setActiveTurn("p3");
+                setTimeout(() => {
+                   setLog("BTN checks");
+                   setActiveTurn(null);
+                   setPhase("turn_deal");
+                }, 1500);
+            }, 1500);
+        }
+    } else if (phase === "turn") {
+        if (action === "fold") {
+            setLog("YOU fold. BB's turn...");
+            setPlayers(prev => prev.map(p => p.id === "hero" ? { ...p, status: "folded" } : p));
+            setActiveTurn("p2");
+            setTimeout(() => {
+                setLog("BB checks");
+                setActiveTurn("p3");
+                setTimeout(() => {
+                   setLog("BTN checks");
+                   setActiveTurn(null);
+                   setPhase("river_deal");
+                }, 1500);
+            }, 1500);
+        } else if (action === "call") {
+            setLog("YOU check");
+            setActiveTurn("p2");
+            setTimeout(() => {
+                setLog("BB checks");
+                setActiveTurn("p3");
+                setTimeout(() => {
+                   setLog("BTN checks");
+                   setActiveTurn(null);
+                   setPhase("river_deal");
+                }, 1500);
+            }, 1500);
+        }
+    } else if (phase === "river") {
+        if (action === "fold") {
+            setLog("YOU fold. BB's turn...");
+            setPlayers(prev => prev.map(p => p.id === "hero" ? { ...p, status: "folded" } : p));
+            setActiveTurn("p2");
+            setTimeout(() => {
+                setLog("BB checks");
+                setActiveTurn("p3");
+                setTimeout(() => {
+                   setLog("BTN checks");
+                   setActiveTurn(null);
+                   setPhase("showdown");
+                }, 1500);
+            }, 1500);
+        } else if (action === "call") {
+            setLog("YOU check");
+            setActiveTurn("p2");
+            setTimeout(() => {
+                setLog("BB checks");
+                setActiveTurn("p3");
+                setTimeout(() => {
+                   setLog("BTN checks");
+                   setActiveTurn(null);
+                   setPhase("showdown");
+                }, 1500);
+            }, 1500);
+        }
+    }
+  };
+
+  const getPlayerPosStyle = (pos: number, total: number): React.CSSProperties => {
+    if (total === 4) {
+      if (pos === 0) return { bottom: '5%', left: '50%', transform: 'translateX(-50%)' };
+      if (pos === 1) return { left: '5%', top: '45%', transform: 'translateY(-50%)' };
+      if (pos === 2) return { top: '5%', left: '50%', transform: 'translateX(-50%)' };
+      if (pos === 3) return { right: '5%', top: '45%', transform: 'translateY(-50%)' };
+    }
+    const angle = Math.PI / 2 + (pos * 2 * Math.PI / total);
+    const x = 50 + 40 * Math.cos(angle);
+    const y = 50 + 35 * Math.sin(angle);
+    return { left: `${x}%`, top: `${y}%`, transform: 'translate(-50%, -50%)' };
+  };
+
+  const getBetPosStyle = (pos: number, total: number): React.CSSProperties => {
+    if (total === 4) {
+      if (pos === 0) return { top: '-110px', left: '50%', transform: 'translateX(-50%)' };
+      if (pos === 1) return { right: '-100px', top: '50%', transform: 'translateY(-50%)' };
+      if (pos === 2) return { bottom: '-80px', left: '50%', transform: 'translateX(-50%)' };
+      if (pos === 3) return { left: '-100px', top: '50%', transform: 'translateY(-50%)' };
+    }
+    const angle = Math.PI / 2 + (pos * 2 * Math.PI / total);
+    const bx = -100 * Math.cos(angle);
+    const by = -100 * Math.sin(angle);
+    return { left: '50%', top: '50%', transform: `translate(calc(-50% + ${bx}px), calc(-50% + ${by}px))` };
+  };
+
+  return (
+    <div className="relative w-full h-full bg-[#1A1A4A] flex flex-col items-center justify-center font-sans select-none overflow-hidden">
+      <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-20 pointer-events-none" />
+
+      {/* Top Bar */}
+      <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center z-50 pointer-events-none">
+        <button 
+          onClick={() => navigate("/lobby")}
+          className="flex items-center gap-2 text-white bg-black/40 hover:bg-black/60 px-4 py-2 rounded-full font-bold backdrop-blur-md transition border border-white/10 pointer-events-auto"
+        >
+          <ArrowLeft className="w-5 h-5" />
+          Leave
+        </button>
+
+        <div className="bg-black/60 px-6 py-2 rounded-full border border-cyan-500/30 text-cyan-400 font-mono text-sm tracking-widest backdrop-blur-sm animate-pulse flex items-center gap-2 shadow-lg">
+           <Info className="w-4 h-4"/>
+           {log}
+        </div>
+
+        <div className="flex gap-4 pointer-events-auto">
+          {userState === "playing" && !isTournament && (
+            <button 
+              onClick={() => { setUserState("spectating"); setLog("You are now sitting out."); }}
+              className="px-4 py-2 bg-orange-600/80 hover:bg-orange-500/80 rounded-full text-white font-bold text-sm backdrop-blur-md border border-orange-400/30 transition shadow-lg"
+            >
+              Sit Out
+            </button>
+          )}
+          <button className="p-2 bg-black/40 hover:bg-black/60 rounded-full text-white backdrop-blur-md border border-white/10 transition">
+            <Users className="w-5 h-5" />
+          </button>
+          <button className="p-2 bg-black/40 hover:bg-black/60 rounded-full text-white backdrop-blur-md border border-white/10 transition">
+            <Settings className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Game Mode HUD (Tournament vs Cash) */}
+      <div className="absolute top-20 left-4 md:left-8 bg-black/60 p-3 rounded-2xl border border-white/10 backdrop-blur-sm z-40 flex flex-col gap-1 min-w-[160px]">
+        {isTournament ? (
+          <>
+            <div className="flex items-center gap-2 text-yellow-400 font-black text-sm uppercase tracking-wider">
+              <Trophy className="w-4 h-4"/>
+              {tourneyStage}
+            </div>
+            <div className="text-white font-bold text-xs mt-1 border-b border-white/10 pb-1 mb-1">
+              Players Left: <span className="text-cyan-400">{tourneyPlayersLeft}</span> / 100
+            </div>
+            <div className="text-white font-bold text-sm">Level 4 <span className="text-slate-400 mx-2">•</span> 100 / 200</div>
+            <div className="flex items-center gap-1.5 text-cyan-400 font-semibold text-xs mt-1">
+              <Clock className="w-3 h-3"/>
+              Blinds up in 04:59
+            </div>
+            <div className="text-slate-400 font-semibold text-[10px] mt-1 border-t border-white/10 pt-1">
+              Rebuys: 1/2 <span className="opacity-60">(Closes at Lvl 8)</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 text-green-400 font-black text-sm uppercase tracking-wider">
+              <Coins className="w-4 h-4"/>
+              Cash Game
+            </div>
+            <div className="text-white font-bold text-sm mt-1">Blinds: <span className="text-slate-300">50 / 100</span></div>
+            <div className="text-slate-400 font-semibold text-[10px] mt-1 border-t border-white/10 pt-1">
+              No limit on rebuys
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Wide Poker Table */}
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[110vw] md:w-[85vw] max-w-[1200px] h-[55vh] md:h-[60vh] max-h-[600px] bg-[#2E3C98] rounded-[300px] shadow-[inset_0_-10px_40px_rgba(0,0,0,0.6),0_20px_50px_rgba(0,0,0,0.5)] border-[16px] md:border-[20px] border-[#1D2660] flex items-center justify-center">
+        <div className="absolute inset-1 md:inset-2 rounded-[300px] border-2 md:border-4 border-cyan-400/20 shadow-[inset_0_0_30px_rgba(0,255,255,0.1)] pointer-events-none" />
+        
+        {/* Center Pot & Logo */}
+        <div className="absolute top-[40%] md:top-[42%] left-1/2 -translate-x-1/2 -translate-y-[65%] flex flex-col items-center gap-4 z-10 pointer-events-none">
+          <div className="text-cyan-200/20 font-black text-2xl md:text-4xl tracking-widest drop-shadow-md italic opacity-50 relative flex justify-center">
+            AIPOT
+            {/* Showdown Rank Badge */}
+            <AnimatePresence>
+              {phase === "showdown" && winningHandRank && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.8 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.8 }}
+                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/90 px-6 py-2 rounded-full border-2 border-yellow-400 shadow-[0_0_20px_rgba(250,204,21,0.5)] z-50 whitespace-nowrap flex items-center gap-2 not-italic"
+                >
+                   <Trophy className="w-5 h-5 text-yellow-400" />
+                   <span className="text-yellow-400 font-black text-sm md:text-base uppercase tracking-widest">{winningHandRank}</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+          
+          <AnimatePresence>
+            {pot > 0 && (
+              <motion.div 
+                initial={{ scale: 0, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="bg-black/80 px-4 md:px-6 py-1 md:py-1.5 rounded-full border border-cyan-500/50 flex items-center gap-3 shadow-[0_0_20px_rgba(0,255,255,0.2)]"
+              >
+                <span className="text-cyan-400 font-bold text-xs md:text-sm">POT</span>
+                <span className="text-white font-black text-lg md:text-xl">${pot}</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Community Cards */}
+          <div className="flex gap-1.5 md:gap-3 mt-1 h-[60px] md:h-[80px] items-center">
+            {communityCards.map((card, i) => {
+              const isWinningCard = phase === "showdown" && winningCards.includes(card);
+              return (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, y: -20, rotateY: 180, scale: 0.8 }}
+                animate={{ opacity: 1, y: isWinningCard ? -10 : 0, rotateY: 0, scale: isWinningCard ? 1.1 : 1 }}
+                transition={{ duration: 0.5, type: "spring", bounce: 0.4 }}
+                className={`w-10 h-14 md:w-14 md:h-20 bg-white rounded-md md:rounded-lg shadow-2xl flex items-center justify-center font-black text-slate-800 text-lg md:text-xl border-2 transition-all duration-300 ${isWinningCard ? 'border-yellow-400 ring-4 ring-yellow-400/50 drop-shadow-[0_0_15px_rgba(250,204,21,0.8)] z-20' : 'border-slate-300 opacity-90'}`}
+              >
+                {isWinningCard && <div className="absolute inset-0 bg-yellow-400/10 pointer-events-none rounded-md md:rounded-lg" />}
+                <span className={card.includes('♥') || card.includes('♦') ? 'text-red-600' : 'text-black'}>
+                  {card}
+                </span>
+              </motion.div>
+            )})}
+          </div>
+        </div>
+
+        {/* START GAME / DEAL HAND Button */}
+        {phase === "init" && userState === "playing" && (
+          <button 
+            onClick={() => {
+              if (!gameStarted) setGameStarted(true);
+              setPhase("dealing");
+            }}
+            className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-3 md:px-8 md:py-4 bg-gradient-to-r from-green-500 to-emerald-400 text-white font-black text-xl md:text-2xl rounded-full shadow-[0_0_20px_rgba(34,197,94,0.5)] hover:scale-105 transition-transform z-50 uppercase tracking-widest border border-white/20"
+          >
+            {gameStarted ? "Deal Hand" : "Start Game"}
+          </button>
+        )}
+
+        {/* Central Deck for dealing animation */}
+        <div className="absolute top-[40%] left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+          {players.map(p => (
+             !p.cardsDealt && (
+               <motion.div 
+                  key={`deck-card-${p.id}`} 
+                  layoutId={`card-${p.id}`} 
+                  className="absolute w-10 h-14 md:w-12 md:h-16 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-indigo-800 to-indigo-950 border-2 border-white/20 rounded-md shadow-md"
+                  style={{ top: -28, left: -20 }}
+               />
+             )
+          ))}
+        </div>
+
+        {/* Showdown Display (Removed redundant center card box) */}
+      </div>
+
+      {/* Render Empty Seats */}
+      {!isTournament && Array.from({ length: maxPlayers }).map((_, i) => {
+        if (players.find(p => p.pos === i)) return null;
+        if (phase !== "init" && phase !== "showdown") return null; // Only allow adding between hands
+        return (
+          <div key={`empty-${i}`} className="absolute flex flex-col items-center z-20" style={getPlayerPosStyle(i, maxPlayers)}>
+             <button 
+               onClick={() => setSelectedSeat(i)}
+               className="w-20 h-20 md:w-24 md:h-24 rounded-full border-2 border-dashed border-white/20 bg-black/20 hover:bg-white/10 hover:border-white/50 flex flex-col items-center justify-center transition group shadow-inner"
+             >
+               <Plus className="w-8 h-8 text-white/30 group-hover:text-white/70 mb-1 transition-colors" />
+               <span className="text-[10px] text-white/40 group-hover:text-white/80 font-bold uppercase tracking-wider transition-colors">Add Bot</span>
+             </button>
+          </div>
+        );
+      })}
+
+      {/* Render Players */}
+      {players.map((p) => (
+        <div key={p.id} className={`absolute flex flex-col items-center z-30 transition-all ${p.id === 'hero' && userState !== 'playing' ? 'opacity-40 grayscale sepia' : ''}`} style={getPlayerPosStyle(p.pos, maxPlayers)}>
+          
+          <div className="absolute z-20" style={getBetPosStyle(p.pos, maxPlayers)}>
+            <ChipStack amount={p.bet} />
+          </div>
+
+          <div className={`relative w-full flex justify-center h-0 ${phase === 'showdown' && p.status !== 'folded' ? 'z-50' : 'z-10'}`}>
+             {/* AI Win Probability HUD for Hero */}
+             {p.id === 'hero' && userState === 'playing' && p.cardsDealt && heroEquity !== null && (
+               <motion.div 
+                 initial={{ opacity: 0, x: -20 }}
+                 animate={{ opacity: 1, x: 0 }}
+                 className="absolute -left-[120px] md:-left-[150px] top-[10px] md:top-[20px] flex flex-col items-center bg-black/80 px-4 py-1.5 md:py-2 rounded-xl border border-orange-500/30 backdrop-blur-md shadow-[0_0_15px_rgba(249,115,22,0.15)] z-50 w-[110px] md:w-[130px]"
+               >
+                 <div className="flex justify-between w-full items-center mb-1 text-[9px] md:text-[10px] uppercase tracking-widest font-black">
+                   <span className="flex items-center gap-1 text-orange-400">
+                     <Target className="w-3 h-3 md:w-3.5 md:h-3.5" /> Prob
+                   </span>
+                   <span className="text-white">{heroEquity}%</span>
+                 </div>
+                 <div className="w-full h-1.5 md:h-2 bg-slate-800 rounded-full overflow-hidden">
+                   <motion.div 
+                     className={`h-full ${heroEquity > 50 ? 'bg-gradient-to-r from-cyan-600 to-cyan-400' : 'bg-gradient-to-r from-orange-600 to-orange-400'}`} 
+                     initial={{ width: 0 }}
+                     animate={{ width: `${heroEquity}%` }}
+                     transition={{ duration: 0.8, type: "spring" }}
+                   />
+                 </div>
+               </motion.div>
+             )}
+
+             <div className={`absolute flex gap-1 ${
+                p.id === 'hero' 
+                  ? (phase === 'showdown' ? '-top-[70px] md:-top-[90px] scale-110 z-50' : '-top-[50px] md:-top-[70px] scale-100 md:scale-110 z-40') 
+                  : (phase === 'showdown' && p.status !== 'folded' ? 'top-10 md:top-14 scale-110 z-50' : 'top-[70%] left-1/2 -translate-x-1/2 md:top-[80%] scale-90 md:scale-100 z-10')
+                } pointer-events-none transition-all duration-500`}>
+                {p.cardsDealt && p.id === 'hero' && userState !== 'playing' ? null : p.cardsDealt && (() => {
+                  const botCards: Record<string, [string, string]> = { p1: ["7♥", "7♦"], p2: ["2♠", "2���"], p3: ["9♠", "8♠"] };
+                  const pCards = p.id === 'hero' ? HERO_CARDS : { p1: ["7♥", "7♦"], p2: ["2♠", "2♦"], p3: ["9♠", "8♠"], p4: ["3♣", "4♣"], p5: ["J♦", "Q♦"], p6: ["A♥", "10♥"], p7: ["5♠", "6♠"] }[p.id] as [string, string];
+                  const showCards = p.id === 'hero' || (phase === 'showdown' && p.status !== 'folded');
+                  const c1Winner = phase === 'showdown' && winner === p.id && winningCards.includes(pCards?.[0] || "");
+                  const c2Winner = phase === 'showdown' && winner === p.id && winningCards.includes(pCards?.[1] || "");
+                  const isHeroShowdown = p.id === 'hero' && phase === 'showdown';
+                  
+                  return (
+                  <>
+                    <motion.div 
+                      layoutId={`card-${p.id}-0`} 
+                      animate={{ opacity: p.status === 'folded' ? 0.4 : 1 }}
+                      className={`w-10 h-14 md:w-14 md:h-20 bg-white rounded-md shadow-xl border flex items-center justify-center font-bold md:text-lg transition-all duration-300 ${p.id === 'hero' && !isHeroShowdown ? 'rotate-[-8deg] translate-y-2 translate-x-2' : ''} ${p.status === 'folded' ? 'grayscale' : ''} ${c1Winner ? 'border-yellow-400 ring-4 ring-yellow-400/50 -translate-y-6 scale-110 z-[100] drop-shadow-[0_0_15px_rgba(250,204,21,0.8)]' : 'border-slate-300 z-40'}`}
+                    >
+                      {c1Winner && <div className="absolute inset-0 bg-yellow-400/10 pointer-events-none rounded-md" />}
+                      {showCards ? <span className={pCards[0].includes('♥') || pCards[0].includes('♦') ? 'text-red-600 font-black text-lg md:text-xl' : 'text-black font-black text-lg md:text-xl'}>{pCards[0]}</span> : <div className="w-full h-full bg-indigo-900 rounded-[4px] m-1 border border-white/20"></div>}
+                    </motion.div>
+                    <motion.div 
+                       initial={{ opacity: 0, x: -20 }}
+                       animate={{ opacity: p.status === 'folded' ? 0.4 : 1, x: 0 }}
+                       transition={{ delay: 0.2 }}
+                       className={`w-10 h-14 md:w-14 md:h-20 bg-white rounded-md shadow-xl border flex items-center justify-center font-bold md:text-lg transition-all duration-300 ${p.id === 'hero' && !isHeroShowdown ? 'rotate-[8deg] -translate-x-2' : ''} ${p.status === 'folded' ? 'grayscale' : ''} ${c2Winner ? 'border-yellow-400 ring-4 ring-yellow-400/50 -translate-y-6 scale-110 z-[100] drop-shadow-[0_0_15px_rgba(250,204,21,0.8)]' : 'border-slate-300 z-40'}`}
+                    >
+                       {c2Winner && <div className="absolute inset-0 bg-yellow-400/10 pointer-events-none rounded-md" />}
+                       {showCards ? <span className={pCards[1].includes('♥') || pCards[1].includes('♦') ? 'text-red-600 font-black text-lg md:text-xl' : 'text-black font-black text-lg md:text-xl'}>{pCards[1]}</span> : <div className="w-full h-full bg-indigo-900 rounded-[4px] m-1 border border-white/20"></div>}
+                    </motion.div>
+                  </>
+                )})()}
+             </div>
+          </div>
+
+          <div className={`relative w-20 h-20 md:w-24 md:h-24 rounded-full border-4 shadow-2xl z-30 bg-slate-800 ${activeTurn === p.id ? 'border-cyan-400 shadow-[0_0_30px_rgba(6,182,212,0.6)] scale-105 transition-transform' : 'border-slate-700'} ${p.status === 'folded' ? 'opacity-50 grayscale' : ''}`}>
+            <TimerRing isActive={activeTurn === p.id} />
+            
+            <div className={`absolute -right-2 -top-2 md:-right-3 md:-top-3 w-8 h-8 md:w-10 md:h-10 rounded-full border-2 border-slate-900 flex items-center justify-center text-[10px] md:text-xs font-black text-white shadow-lg ${
+              p.role === 'BTN' ? 'bg-white text-slate-900' :
+              p.role === 'SB' ? 'bg-blue-500' :
+              p.role === 'BB' ? 'bg-purple-600' :
+              'bg-slate-600'
+            }`}>
+              {p.role}
+            </div>
+
+            <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${p.avatarSeed}`} alt={p.name} className="w-full h-full object-cover rounded-full" />
+            
+            {p.status === 'folded' && (
+              <div className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center text-sm font-black text-white">
+                FOLD
+              </div>
+            )}
+            
+            {p.id === 'hero' && userState !== 'playing' && (
+              <div className="absolute inset-0 bg-black/60 rounded-full flex flex-col items-center justify-center text-center">
+                <span className="text-xs font-black text-white">SITTING OUT</span>
+              </div>
+            )}
+            
+            {winner === p.id && (
+              <motion.div 
+                initial={{ scale: 0, y: 10 }}
+                animate={{ scale: 1, y: 0 }}
+                className="absolute -top-10 left-1/2 -translate-x-1/2 z-50 drop-shadow-[0_0_15px_rgba(250,204,21,0.8)]"
+              >
+                <Trophy className="w-10 h-10 md:w-12 md:h-12 text-yellow-400 fill-yellow-400" />
+              </motion.div>
+            )}
+          </div>
+
+          <div className={`mt-3 px-4 py-1 md:py-1.5 rounded-full text-xs md:text-sm font-black border-2 shadow-lg whitespace-nowrap z-30 ${p.id === 'hero' ? 'bg-gradient-to-r from-slate-900 to-slate-800 border-cyan-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-300'}`}>
+            {p.name} • <span className={p.id === 'hero' ? 'text-cyan-400' : 'text-green-400'}>${p.chips}</span>
+          </div>
+        </div>
+      ))}
+
+      <AnimatePresence mode="wait">
+        {activeTurn === "hero" && userState === "playing" && (
+          <motion.div 
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            className="absolute bottom-4 md:bottom-8 right-4 md:right-8 flex gap-2 md:gap-4 z-50"
+          >
+            {isRaising ? (
+              <motion.div 
+                key="raise-menu"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                className="flex flex-col gap-2 bg-black/80 p-3 md:p-4 rounded-2xl backdrop-blur-md border border-white/10 shadow-2xl"
+              >
+                <div className="flex justify-between items-center mb-1">
+                  <span className="text-white font-bold text-sm uppercase tracking-widest">Raise Amount</span>
+                  <button onClick={() => setIsRaising(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setRaiseAmount(String(Math.floor(pot / 2)))} className="flex-1 bg-slate-700 hover:bg-slate-600 py-1.5 rounded-lg text-xs font-bold text-white transition">1/2 Pot</button>
+                  <button onClick={() => setRaiseAmount(String(pot))} className="flex-1 bg-slate-700 hover:bg-slate-600 py-1.5 rounded-lg text-xs font-bold text-white transition">Pot</button>
+                  {phase === "preflop" && (
+                    <button onClick={() => setRaiseAmount(String(pot * 3))} className="flex-1 bg-slate-700 hover:bg-slate-600 py-1.5 rounded-lg text-xs font-bold text-white transition">3-Bet</button>
+                  )}
+                  <button onClick={() => setRaiseAmount(String(players.find(p=>p.id==='hero')?.chips || 0))} className="flex-1 bg-red-900/80 hover:bg-red-800 py-1.5 rounded-lg text-xs font-bold text-red-200 transition border border-red-500/50">All-In</button>
+                </div>
+                <div className="flex gap-2 mt-1">
+                  <input 
+                    type="number" 
+                    value={raiseAmount}
+                    onChange={(e) => setRaiseAmount(e.target.value)}
+                    className="flex-1 w-24 bg-slate-900 border border-slate-600 rounded-xl px-3 py-2 text-white font-black text-lg focus:outline-none focus:border-cyan-500"
+                    placeholder="$0"
+                  />
+                  <button 
+                    onClick={() => handleHeroAction("raise", Number(raiseAmount))}
+                    disabled={!raiseAmount || Number(raiseAmount) <= 0}
+                    className="bg-red-500 hover:bg-red-400 disabled:opacity-50 disabled:bg-slate-700 text-white font-black px-6 py-2 rounded-xl shadow-[0_4px_0_#991B1B] active:translate-y-1 active:shadow-none transition uppercase"
+                  >
+                    Confirm
+                  </button>
+                </div>
+              </motion.div>
+            ) : (
+              <motion.div key="action-buttons" className="flex gap-2 md:gap-4" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}>
+                <button 
+                  onClick={() => handleHeroAction("fold")}
+                  className="bg-slate-700 hover:bg-slate-600 text-white font-bold px-6 py-4 md:px-10 md:py-5 rounded-xl md:rounded-2xl shadow-[0_6px_0_#334155] active:translate-y-2 active:shadow-none transition uppercase tracking-wider text-sm md:text-lg"
+                >
+                  Fold
+                </button>
+                <button 
+                  onClick={() => handleHeroAction("call")}
+                  className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-black px-6 py-4 md:px-10 md:py-5 rounded-xl md:rounded-2xl shadow-[0_6px_0_#A16207] active:translate-y-2 active:shadow-none transition uppercase tracking-wider text-sm md:text-lg"
+                >
+                  {phase === "preflop" ? "Call 50" : "Check"}
+                </button>
+                <button 
+                  onClick={() => setIsRaising(true)}
+                  className="bg-red-500 hover:bg-red-400 text-white font-black px-6 py-4 md:px-10 md:py-5 rounded-xl md:rounded-2xl shadow-[0_6px_0_#991B1B] active:translate-y-2 active:shadow-none transition uppercase tracking-wider text-sm md:text-lg"
+                >
+                  Raise
+                </button>
+              </motion.div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Spectator & Waitlist Controls */}
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center pointer-events-none">
+         <AnimatePresence>
+           {userState === "spectating" && (
+             <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="flex flex-col items-center gap-3">
+                <div className="bg-black/60 px-4 py-1.5 rounded-full border border-purple-500/50 text-purple-300 font-bold text-sm tracking-widest uppercase shadow-lg backdrop-blur-sm">
+                  👁️ Spectating Mode
+                </div>
+                {!isTournament ? (
+                  <button 
+                    onClick={() => { setUserState("waiting"); setLog("Added to waitlist. Waiting for next hand..."); }}
+                    className="pointer-events-auto bg-gradient-to-b from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 px-8 py-3 rounded-xl font-black text-white shadow-[0_4px_0_#1D4ED8] active:translate-y-1 active:shadow-none transition-all uppercase tracking-wider"
+                  >
+                    Sit In (Wait for next hand)
+                  </button>
+                ) : (
+                  <div className="bg-black/60 px-6 py-2 rounded-xl font-bold text-white shadow-lg backdrop-blur-sm border border-white/10">
+                    Spectating Tournament
+                  </div>
+                )}
+             </motion.div>
+           )}
+           {userState === "waiting" && (
+             <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="flex flex-col items-center gap-3">
+                <div className="bg-cyan-900/60 px-4 py-1.5 rounded-full border border-cyan-500/50 text-cyan-300 font-bold text-sm tracking-widest uppercase shadow-lg backdrop-blur-sm animate-pulse">
+                  🕒 Waiting for next hand...
+                </div>
+                <button 
+                  onClick={() => { setUserState("spectating"); setLog("Waitlist cancelled. Spectating."); }}
+                  className="pointer-events-auto bg-slate-800 hover:bg-slate-700 px-8 py-3 rounded-xl font-black text-slate-300 border border-slate-600 shadow-lg transition-all uppercase tracking-wider"
+                >
+                  Cancel (Spectate Only)
+                </button>
+             </motion.div>
+           )}
+           {userState === "eliminated" && (
+             <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="flex flex-col items-center gap-3">
+                <div className="bg-red-900/80 px-4 py-1.5 rounded-full border border-red-500/50 text-red-300 font-bold text-sm tracking-widest uppercase shadow-lg backdrop-blur-md flex items-center gap-2">
+                  <span>💀</span> Eliminated
+                </div>
+                <div className="bg-black/80 px-6 py-3 rounded-xl font-black text-white shadow-xl backdrop-blur-md border border-white/10 text-center">
+                  You busted out! <br/>
+                  <span className="text-slate-400 font-bold text-xs uppercase tracking-wider">Now Spectating Tournament</span>
+                </div>
+             </motion.div>
+           )}
+         </AnimatePresence>
+      </div>
+
+      <button className="absolute bottom-4 md:bottom-8 left-4 md:left-8 p-3 md:p-5 bg-indigo-600 hover:bg-indigo-500 rounded-full shadow-xl border-2 border-indigo-400/30 text-white transition z-40">
+        <MessageCircle className="w-6 h-6 md:w-8 md:h-8" />
+      </button>
+
+      {/* Table Breaking Overlay */}
+      <AnimatePresence>
+        {isTableBreaking && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.05 }}
+            className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-[#1A1A4A]/95 backdrop-blur-xl"
+          >
+            <Trophy className="w-20 h-20 md:w-28 md:h-28 text-yellow-400 mb-6 md:mb-8 animate-bounce drop-shadow-[0_0_30px_rgba(250,204,21,0.6)]" />
+            <h2 className="text-4xl md:text-6xl font-black text-white uppercase tracking-widest text-center mb-3 md:mb-4 drop-shadow-xl">
+              Table Breaking
+            </h2>
+            <p className="text-lg md:text-2xl text-cyan-400 font-bold uppercase tracking-wider flex items-center gap-2 md:gap-3 drop-shadow-md">
+              <Users className="w-5 h-5 md:w-6 md:h-6"/>
+              Moving to <span className="text-yellow-400 border-b-2 border-yellow-400 pb-0.5 md:pb-1">{nextStageName}</span>...
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Bot Addition Modal */}
+      <AnimatePresence>
+        {selectedSeat !== null && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-[#242754] w-full max-w-sm rounded-2xl border border-white/10 shadow-2xl p-6"
+            >
+               <div className="flex justify-between items-center mb-6 border-b border-white/5 pb-4">
+                 <h3 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
+                   <Users className="text-cyan-400 w-6 h-6"/> Add Bot
+                 </h3>
+                 <button onClick={() => setSelectedSeat(null)} className="text-slate-400 hover:text-white transition">
+                   <X className="w-6 h-6" />
+                 </button>
+               </div>
+               
+               <div className="flex flex-col gap-4">
+                 <div>
+                   <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Bot Play Style</label>
+                   <select id="botPlayStyle" className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition">
+                     <option value="balanced">Balanced / GTO (Free Model)</option>
+                     <option value="aggressive">Aggressive (Free Model)</option>
+                     <option value="tight">Tight (Free Model)</option>
+                     <option value="random">Random (Free Model)</option>
+                     {localStorage.getItem("aipot_role") === "pro" ? (
+                       <option value="gto-wizard">GTO Wizard API (PRO Model)</option>
+                     ) : (
+                       <option value="gto-wizard" disabled>🔒 GTO Wizard API (PRO Only)</option>
+                     )}
+                   </select>
+                 </div>
+                 <button 
+                   onClick={() => {
+                     const style = (document.getElementById("botPlayStyle") as HTMLSelectElement)?.value || "balanced";
+                     const newId = `p${selectedSeat}`;
+                     const avatars = ["Felix", "Aneka", "Oliver", "Jasper", "Zoe", "Luna", "Max", "Leo"];
+                     const newBot: Player = {
+                       id: newId,
+                       name: `Bot (${style})`,
+                       pos: selectedSeat,
+                       role: "BTN",
+                       avatarSeed: avatars[selectedSeat] || "Max",
+                       chips: 10000,
+                       bet: 0,
+                       status: "active",
+                       cardsDealt: false
+                     };
+                     setPlayers(prev => [...prev, newBot]);
+                     setSelectedSeat(null);
+                   }}
+                   className="mt-4 w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black py-4 rounded-xl transition shadow-lg flex items-center justify-center gap-2 uppercase tracking-wider"
+                 >
+                   <Plus className="w-5 h-5"/> Add Bot
+                 </button>
+               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+    </div>
+  );
+}
