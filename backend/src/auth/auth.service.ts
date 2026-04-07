@@ -11,6 +11,7 @@ import { GuestSessionDto } from './dto/guest-session.dto';
 import { SignInDto } from './dto/sign-in.dto';
 import { SignUpDto } from './dto/sign-up.dto';
 import { JwtUserPayload, UserRecord } from '../common/domain.types';
+import { PreferredLanguage } from '../common/enums/language.enum';
 import { UserRole } from '../common/enums/role.enum';
 import { UsersService } from '../users/users.service';
 
@@ -22,6 +23,7 @@ export interface AuthResult {
 		nickname: string;
 		role: UserRole;
 		guest: boolean;
+		preferredLanguage: PreferredLanguage;
 		balanceAmount: number;
 	};
 }
@@ -70,7 +72,11 @@ export class AuthService {
 		return this.jwtService.sign(payload);
 	}
 
-	private toAuthResult(payload: JwtUserPayload, balanceAmount: number): AuthResult {
+	private toAuthResult(
+		payload: JwtUserPayload,
+		balanceAmount: number,
+		preferredLanguage: PreferredLanguage,
+	): AuthResult {
 		return {
 			accessToken: this.signPayload(payload),
 			tokenType: 'Bearer',
@@ -79,6 +85,7 @@ export class AuthService {
 				nickname: payload.nickname,
 				role: payload.role,
 				guest: payload.guest,
+				preferredLanguage,
 				balanceAmount,
 			},
 		};
@@ -91,7 +98,11 @@ export class AuthService {
 			role: UserRole.FREE,
 		});
 
-		return this.toAuthResult(this.buildPayload(newUser), newUser.balanceAmount);
+		return this.toAuthResult(
+			this.buildPayload(newUser),
+			newUser.balanceAmount,
+			newUser.preferredLanguage,
+		);
 	}
 
 	async signIn(dto: SignInDto): Promise<AuthResult> {
@@ -105,7 +116,11 @@ export class AuthService {
 			throw new UnauthorizedException('아이디 또는 비밀번호가 올바르지 않습니다.');
 		}
 
-		return this.toAuthResult(this.buildPayload(user), user.balanceAmount);
+		return this.toAuthResult(
+			this.buildPayload(user),
+			user.balanceAmount,
+			user.preferredLanguage,
+		);
 	}
 
 	createGuestSession(dto: GuestSessionDto): AuthResult {
@@ -117,7 +132,7 @@ export class AuthService {
 			guest: true,
 		};
 
-		return this.toAuthResult(guestPayload, 1000);
+		return this.toAuthResult(guestPayload, 1000, PreferredLanguage.EN);
 	}
 
 	getMe(payload: JwtUserPayload) {
@@ -127,6 +142,7 @@ export class AuthService {
 				nickname: payload.nickname,
 				role: payload.role,
 				guest: true,
+				preferredLanguage: PreferredLanguage.EN,
 				balanceAmount: 1000,
 			};
 		}
@@ -141,6 +157,7 @@ export class AuthService {
 			nickname: user.nickname,
 			role: user.role,
 			guest: false,
+			preferredLanguage: user.preferredLanguage,
 			balanceAmount: user.balanceAmount,
 			avatar: user.avatar,
 			stats: user.stats,

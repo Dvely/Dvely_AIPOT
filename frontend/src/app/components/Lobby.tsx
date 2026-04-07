@@ -4,7 +4,14 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   Coins, Menu, Crown, Settings, Plus, Target, Users, Swords, BookOpen, X, Lock, Unlock, LogOut, CheckCircle2, ShoppingBag, Info, Trophy, Timer, Volume2, Globe, ChevronRight
 } from "lucide-react";
-import { getCurrentAuth, getCurrentUserId, signOut } from "../auth";
+import {
+  getCurrentAuth,
+  getCurrentPreferredLanguage,
+  getCurrentUserId,
+  patchSessionUser,
+  PreferredLanguage,
+  signOut,
+} from "../auth";
 import { apiFetch } from "../api";
 
 type LobbyRoomType = "ai_bot" | "cash" | "tournament";
@@ -63,6 +70,7 @@ interface ProfileMeResponse {
   id: string;
   nickname: string;
   role: "guest" | "free" | "pro";
+  preferredLanguage: PreferredLanguage;
   balanceAmount: number;
   avatar: ProfileAvatar;
   subscriptionActive: boolean;
@@ -234,6 +242,10 @@ export function Lobby() {
     confirmPassword: "",
   });
   const [profileBusy, setProfileBusy] = useState(false);
+  const [settingsLanguage, setSettingsLanguage] = useState<PreferredLanguage>(
+    getCurrentPreferredLanguage(),
+  );
+  const [settingsBusy, setSettingsBusy] = useState(false);
   
   const { isLoggedIn, isPro, userName, balanceAmount } = getCurrentAuth();
   const currentUserId = getCurrentUserId();
@@ -265,6 +277,8 @@ export function Lobby() {
       setProfileMe(me);
       setProfileStats(stats);
       applyAvatarOptions(me.avatar);
+      setSettingsLanguage(me.preferredLanguage ?? "en");
+      patchSessionUser({ preferredLanguage: me.preferredLanguage ?? "en" });
       setProfileError("");
     } catch (error) {
       setProfileError(
@@ -341,6 +355,39 @@ export function Lobby() {
     }
   };
 
+  const saveSettings = async () => {
+    if (!isLoggedIn) {
+      setShowSettingsModal(false);
+      return;
+    }
+
+    setSettingsBusy(true);
+    try {
+      const updated = await apiFetch<{ preferredLanguage: PreferredLanguage }>(
+        "/profile/preferences",
+        {
+          method: "PATCH",
+          body: JSON.stringify({ preferredLanguage: settingsLanguage }),
+        },
+      );
+
+      patchSessionUser({ preferredLanguage: updated.preferredLanguage });
+      setProfileMe((prev) =>
+        prev
+          ? {
+              ...prev,
+              preferredLanguage: updated.preferredLanguage,
+            }
+          : prev,
+      );
+      setShowSettingsModal(false);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "설정 저장에 실패했습니다.");
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
+
   const loadTables = async () => {
     setTableLoading(true);
     try {
@@ -382,6 +429,12 @@ export function Lobby() {
       void loadProfile();
     }
   }, [showProfileModal, isLoggedIn]);
+
+  useEffect(() => {
+    if (showSettingsModal && isLoggedIn) {
+      void loadProfile();
+    }
+  }, [showSettingsModal, isLoggedIn]);
 
   useEffect(() => {
     if (activeTab === 'LEADERBOARD') {
@@ -1426,7 +1479,12 @@ export function Lobby() {
                    <h4 className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-3 uppercase tracking-wider">
                      <Globe className="w-4 h-4"/> Language
                    </h4>
-                   <select className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition">
+                   <select
+                     value={settingsLanguage}
+                     onChange={(event) => setSettingsLanguage(event.target.value as PreferredLanguage)}
+                     disabled={!isLoggedIn || settingsBusy}
+                     className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition disabled:opacity-60"
+                   >
                       <option value="en">English</option>
                       <option value="ko">한국어 (Korean)</option>
                       <option value="ja">日本語 (Japanese)</option>
@@ -1454,8 +1512,14 @@ export function Lobby() {
                    </div>
                  </div>
 
-                 <button onClick={() => setShowSettingsModal(false)} className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-xl mt-2">
-                   Save Changes
+                 <button
+                   onClick={() => {
+                     void saveSettings();
+                   }}
+                   disabled={settingsBusy}
+                   className="w-full bg-cyan-600 hover:bg-cyan-500 disabled:opacity-60 text-white font-black py-3 rounded-xl mt-2"
+                 >
+                   {settingsBusy ? "Saving..." : "Save Changes"}
                  </button>
               </div>
             </motion.div>

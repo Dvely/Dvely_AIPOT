@@ -13,6 +13,7 @@ import { UsersService } from '../users/users.service';
 import { BuyChipsDto } from './dto/buy-chips.dto';
 import { SubscribeProDto } from './dto/subscribe-pro.dto';
 import { UpdateAvatarDto } from './dto/update-avatar.dto';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 
 const CHIP_PACKAGES: Record<string, { chips: number; priceLabel: string }> = {
 	'chips-50k': { chips: 50_000, priceLabel: '$4.99' },
@@ -43,6 +44,7 @@ export class ProfileService {
 			id: account.id,
 			nickname: account.nickname,
 			role: account.role,
+			preferredLanguage: account.preferredLanguage,
 			balanceAmount: account.balanceAmount,
 			avatar: account.avatar,
 			subscriptionActive: account.subscriptionActive,
@@ -70,6 +72,19 @@ export class ProfileService {
 			id: updated.id,
 			nickname: updated.nickname,
 			avatar: updated.avatar,
+		};
+	}
+
+	updatePreferences(user: JwtUserPayload, dto: UpdatePreferencesDto) {
+		this.ensureAccountUser(user);
+		const updated = this.usersService.updatePreferredLanguage(
+			user.sub,
+			dto.preferredLanguage,
+		);
+		return {
+			id: updated.id,
+			nickname: updated.nickname,
+			preferredLanguage: updated.preferredLanguage,
 		};
 	}
 

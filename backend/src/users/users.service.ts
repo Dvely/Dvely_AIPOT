@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { AvatarConfig, UserRecord } from '../common/domain.types';
+import { PreferredLanguage } from '../common/enums/language.enum';
 import { UserRole } from '../common/enums/role.enum';
 import { StoreService } from '../store/store.service';
 
@@ -33,6 +34,13 @@ export class UsersService {
 
 	updateAvatar(userId: string, avatar: AvatarConfig): UserRecord {
 		return this.store.updateUserAvatar(userId, avatar);
+	}
+
+	updatePreferredLanguage(
+		userId: string,
+		preferredLanguage: PreferredLanguage,
+	): UserRecord {
+		return this.store.updateUserPreferredLanguage(userId, preferredLanguage);
 	}
 
 	addBalance(userId: string, amount: number): UserRecord {

@@ -5,7 +5,7 @@ import {
   ArrowLeft, History, PlayCircle, ChevronRight, CheckCircle2, XCircle, BrainCircuit, Target, ShieldAlert, PauseCircle, ChevronLeft, Star
 } from "lucide-react";
 import { apiFetch } from "../api";
-import { getCurrentAuth, getCurrentUserId } from "../auth";
+import { getCurrentAuth, getCurrentPreferredLanguage, getCurrentUserId } from "../auth";
 
 // --- MOCK DATA ---
 interface ActionStep {
@@ -324,6 +324,7 @@ const ANALYSIS_MODELS: Record<AnalysisProvider, Array<{ label: string; value: st
 export function HandReview() {
   const navigate = useNavigate();
   const { isLoggedIn, isPro } = getCurrentAuth();
+  const preferredLanguage = getCurrentPreferredLanguage();
   const viewerUserId = getCurrentUserId();
   const [hands, setHands] = useState<HandHistory[]>([]);
   const [loading, setLoading] = useState(false);
@@ -433,6 +434,7 @@ export function HandReview() {
             provider: analysisProvider,
             model: analysisModel,
             includePremiumAnalysis: true,
+            language: preferredLanguage,
           }),
         },
       );

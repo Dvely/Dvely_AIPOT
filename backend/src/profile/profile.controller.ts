@@ -18,6 +18,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { BuyChipsDto } from './dto/buy-chips.dto';
 import { SubscribeProDto } from './dto/subscribe-pro.dto';
 import { UpdateAvatarDto } from './dto/update-avatar.dto';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 import { ProfileService } from './profile.service';
 
 @ApiTags('profile')
@@ -43,6 +44,15 @@ export class ProfileController {
 	@ApiOperation({ summary: '아바타 조합형 설정 업데이트' })
 	updateAvatar(@CurrentUser() user: JwtUserPayload, @Body() dto: UpdateAvatarDto) {
 		return this.profileService.updateAvatar(user, dto);
+	}
+
+	@Patch('preferences')
+	@ApiOperation({ summary: '언어 등 프로필 설정 업데이트' })
+	updatePreferences(
+		@CurrentUser() user: JwtUserPayload,
+		@Body() dto: UpdatePreferencesDto,
+	) {
+		return this.profileService.updatePreferences(user, dto);
 	}
 
 	@Post('password')

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AiService } from '../ai/ai.service';
-import { JwtUserPayload } from '../common/domain.types';
+import { JwtUserPayload, UserRecord } from '../common/domain.types';
 import { UserRole } from '../common/enums/role.enum';
 import { LlmProvider } from '../common/enums/room.enum';
 import { StoreService } from '../store/store.service';
@@ -16,7 +16,7 @@ export class HandReviewService {
 		private readonly usersService: UsersService,
 	) {}
 
-	private assertCanRead(user: JwtUserPayload) {
+	private assertCanRead(user: JwtUserPayload): UserRecord {
 		if (user.guest || user.role === UserRole.GUEST) {
 			throw new ForbiddenException('Guest는 Hand Review를 사용할 수 없습니다.');
 		}
@@ -25,6 +25,8 @@ export class HandReviewService {
 		if (!account || account.role !== UserRole.PRO) {
 			throw new ForbiddenException('Hand Review는 PRO 권한이 필요합니다.');
 		}
+
+		return account;
 	}
 
 	listHands(user: JwtUserPayload) {
@@ -52,7 +54,7 @@ export class HandReviewService {
 	}
 
 	async analyze(user: JwtUserPayload, handId: string, dto: AnalyzeHandDto) {
-		this.assertCanRead(user);
+		const account = this.assertCanRead(user);
 
 		const hand = this.store.getHandReview(handId, user.sub);
 		const result = await this.aiService.analyzeAllHandActions({
@@ -61,6 +63,7 @@ export class HandReviewService {
 			provider: dto.provider,
 			model: dto.model,
 			includePremiumAnalysis: dto.includePremiumAnalysis ?? true,
+			language: dto.language ?? account.preferredLanguage,
 		});
 
 		const saved = result.reviews.map((review) =>
@@ -93,7 +96,7 @@ export class HandReviewService {
 		actionOrder: number,
 		dto: AnalyzeHandDto,
 	) {
-		this.assertCanRead(user);
+		const account = this.assertCanRead(user);
 		if (!Number.isInteger(actionOrder) || actionOrder < 1) {
 			throw new BadRequestException('actionOrder는 1 이상의 정수여야 합니다.');
 		}
@@ -113,6 +116,7 @@ export class HandReviewService {
 			provider: dto.provider,
 			model: dto.model,
 			includePremiumAnalysis: dto.includePremiumAnalysis ?? true,
+			language: dto.language ?? account.preferredLanguage,
 		});
 
 		const saved = this.store.addHandActionAnalysis({

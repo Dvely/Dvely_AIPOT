@@ -1,5 +1,6 @@
 export type MembershipTier = "free" | "pro";
 export type AuthRole = "guest" | MembershipTier;
+export type PreferredLanguage = "en" | "ko" | "ja";
 
 interface AuthSnapshot {
   role: AuthRole;
@@ -7,6 +8,7 @@ interface AuthSnapshot {
   isPro: boolean;
   userName: string;
   balanceAmount: number;
+  preferredLanguage: PreferredLanguage;
 }
 
 interface AuthResult {
@@ -20,6 +22,7 @@ interface AuthApiUser {
   role: string;
   guest: boolean;
   balanceAmount?: number;
+  preferredLanguage?: PreferredLanguage;
 }
 
 interface AuthApiResponse {
@@ -34,6 +37,7 @@ interface StoredSessionUser {
   role: AuthRole;
   guest: boolean;
   balanceAmount: number;
+  preferredLanguage: PreferredLanguage;
 }
 
 const ACCESS_TOKEN_KEY = "aipot_access_token";
@@ -47,6 +51,11 @@ function normalizeRole(rawRole: string, guest: boolean): AuthRole {
   if (guest || rawRole === "guest") return "guest";
   if (rawRole === "pro") return "pro";
   return "free";
+}
+
+function normalizePreferredLanguage(rawLanguage: unknown): PreferredLanguage {
+  if (rawLanguage === "ko" || rawLanguage === "ja") return rawLanguage;
+  return "en";
 }
 
 function readStoredUser(): StoredSessionUser | null {
@@ -70,6 +79,7 @@ function writeSession(session: AuthApiResponse) {
     nickname: session.user.nickname,
     role,
     guest: session.user.guest,
+    preferredLanguage: normalizePreferredLanguage(session.user.preferredLanguage),
     balanceAmount:
       typeof session.user.balanceAmount === "number"
         ? session.user.balanceAmount
@@ -228,8 +238,11 @@ export function getCurrentAuth(): AuthSnapshot {
       isPro: false,
       userName: "Guest",
       balanceAmount: 1000,
+      preferredLanguage: "en",
     };
   }
+
+  const preferredLanguage = normalizePreferredLanguage(user.preferredLanguage);
 
   return {
     role: user.role,
@@ -237,10 +250,15 @@ export function getCurrentAuth(): AuthSnapshot {
     isPro: user.role === "pro",
     userName: user.nickname,
     balanceAmount: typeof user.balanceAmount === "number" ? user.balanceAmount : user.role === "guest" ? 1000 : 10000,
+    preferredLanguage,
   };
 }
 
 export function getCurrentUserId() {
   const user = readStoredUser();
   return user?.id ?? null;
+}
+
+export function getCurrentPreferredLanguage(): PreferredLanguage {
+  return getCurrentAuth().preferredLanguage;
 }

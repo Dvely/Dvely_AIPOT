@@ -1,4 +1,5 @@
 import { UserRole } from './enums/role.enum';
+import { PreferredLanguage } from './enums/language.enum';
 import {
   ActionType,
   BotModelTier,
@@ -33,6 +34,7 @@ export interface UserRecord {
   nickname: string;
   passwordHash: string;
   role: UserRole;
+  preferredLanguage: PreferredLanguage;
   balanceAmount: number;
   avatar: AvatarConfig;
   stats: UserStats;

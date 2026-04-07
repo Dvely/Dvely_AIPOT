@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { AiBotDecision } from '../common/domain.types';
+import { PreferredLanguage } from '../common/enums/language.enum';
 import { UserRole } from '../common/enums/role.enum';
 import { ActionType, BotModelTier, LlmProvider } from '../common/enums/room.enum';
 import { BotActionRequestDto } from './dto/bot-action-request.dto';
@@ -90,6 +91,70 @@ export class AiService {
 			return this.configService.get('GEMINI_MODEL', 'gemini-1.5-pro');
 		}
 		return this.configService.get('LOCAL_LLM_MODEL', 'qwen2.5-coder:3b');
+	}
+
+	private normalizeLanguage(language?: PreferredLanguage): PreferredLanguage {
+		if (language === PreferredLanguage.KO || language === PreferredLanguage.JA) {
+			return language;
+		}
+		return PreferredLanguage.EN;
+	}
+
+	private localizedText(
+		language: PreferredLanguage,
+		text: { en: string; ko: string; ja: string },
+	): string {
+		if (language === PreferredLanguage.KO) return text.ko;
+		if (language === PreferredLanguage.JA) return text.ja;
+		return text.en;
+	}
+
+	private languageInstruction(language: PreferredLanguage): string {
+		const label = this.localizedText(language, {
+			en: 'English',
+			ko: 'Korean',
+			ja: 'Japanese',
+		});
+		return `All user-facing text must be written in ${label} (${language}).`;
+	}
+
+	private handReviewFallback(language: PreferredLanguage, premium: boolean): string {
+		if (language === PreferredLanguage.KO) {
+			return [
+				'1) 핵심 실수',
+				'- LLM 응답 지연으로 상세 분석을 생성하지 못했습니다.',
+				'2) 더 나은 라인',
+				'- 현재 액션 로그 기준으로 포지션/팟오즈 중심 재검토를 권장합니다.',
+				'3) 익스플로잇 노트',
+				'- 다음 시도에서 동일 모델/프롬프트로 재분석해 비교하세요.',
+				premium ? '4) GTO 스타일 심화 노트' : '4) 기본 개선 계획',
+				'- 타임아웃으로 심화 분석이 생략되었습니다.',
+			].join('\n');
+		}
+
+		if (language === PreferredLanguage.JA) {
+			return [
+				'1) 主要なミス',
+				'- LLMの応答遅延により詳細分析を生成できませんでした。',
+				'2) より良いライン',
+				'- 現在のアクションログを基に、ポジションとポットオッズ中心で再検討してください。',
+				'3) エクスプロイトノート',
+				'- 次回は同じモデル/プロンプトで再分析し、結果を比較してください。',
+				premium ? '4) GTOスタイル詳細ノート' : '4) 基本改善プラン',
+				'- タイムアウトにより詳細分析は省略されました。',
+			].join('\n');
+		}
+
+		return [
+			'1) Key Mistakes',
+			'- Detailed analysis could not be generated due to LLM timeout.',
+			'2) Better Lines',
+			'- Re-evaluate this hand with stronger focus on position and pot odds.',
+			'3) Exploit Notes',
+			'- Retry with the same model/prompt and compare differences.',
+			premium ? '4) GTO-Style Deep Notes' : '4) Basic Improvement Plan',
+			'- Deep analysis was skipped due to timeout.',
+		].join('\n');
 	}
 
 	private async callOpenAICompatible(options: {
@@ -315,6 +380,7 @@ export class AiService {
 		const provider = dto.provider ?? LlmProvider.LOCAL;
 		const model = this.providerModel(provider, dto.model);
 		const premium = dto.includePremiumAnalysis ?? true;
+		const language = this.normalizeLanguage(dto.language);
 
 		const systemPrompt = [
 			'You are AIPOT hand review analyzer.',
@@ -324,6 +390,7 @@ export class AiService {
 			'2) Better Lines',
 			'3) Exploit Notes',
 			premium ? '4) GTO-Style Deep Notes' : '4) Basic Improvement Plan',
+			this.languageInstruction(language),
 		].join(' ');
 
 		const userPrompt = JSON.stringify(
@@ -346,16 +413,7 @@ export class AiService {
 				timeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
 			});
 		} catch {
-			analysis = [
-				'1) Key Mistakes',
-				'- LLM 응답 지연으로 상세 분석을 생성하지 못했습니다.',
-				'2) Better Lines',
-				'- 현재 액션 로그 기준으로 포지션/팟오즈 중심 재검토를 권장합니다.',
-				'3) Exploit Notes',
-				'- 다음 시도에서 모델/프롬프트를 유지하고 재분석해 비교하세요.',
-				premium ? '4) GTO-Style Deep Notes' : '4) Basic Improvement Plan',
-				'- 타임아웃으로 심화 분석이 생략되었습니다.',
-			].join('\n');
+			analysis = this.handReviewFallback(language, premium);
 		}
 
 		return {
@@ -369,6 +427,7 @@ export class AiService {
 		const provider = dto.provider ?? LlmProvider.LOCAL;
 		const model = this.providerModel(provider, dto.model);
 		const premium = dto.includePremiumAnalysis ?? true;
+		const language = this.normalizeLanguage(dto.language);
 
 		const context = dto.handContext as {
 			participants?: Array<{ seatId?: number; displayName?: string; roleType?: string }>;
@@ -406,7 +465,11 @@ export class AiService {
 			return {
 				provider,
 				model,
-				summary: '분석할 액션 로그가 없습니다.',
+				summary: this.localizedText(language, {
+					en: 'No action logs available to analyze.',
+					ko: '분석할 액션 로그가 없습니다.',
+					ja: '分析するアクションログがありません。',
+				}),
 				reviews: [] as Array<{ order: number; analysis: string }>,
 			};
 		}
@@ -418,6 +481,7 @@ export class AiService {
 			'Schema: {"summary":string,"actions":[{"order":number,"analysis":string,"verdict":"good|neutral|bad","score":-5..5,"betterLine":string}]}',
 			'If uncertain, still provide concise feedback per action order.',
 			premium ? 'Include deeper tactical notes in analysis text.' : 'Keep analysis practical and concise.',
+			this.languageInstruction(language),
 		].join(' ');
 
 		const userPrompt = JSON.stringify(
@@ -444,7 +508,11 @@ export class AiService {
 			const summary =
 				typeof parsed?.summary === 'string' && parsed.summary.trim().length > 0
 					? parsed.summary.trim()
-					: '핸드 전체 액션 평가가 생성되었습니다.';
+					: this.localizedText(language, {
+						en: 'Hand-wide action review has been generated.',
+						ko: '핸드 전체 액션 평가가 생성되었습니다.',
+						ja: 'ハンド全体のアクション評価を生成しました。',
+					});
 
 			const parsedActions = Array.isArray(parsed?.actions)
 				? (parsed.actions as Array<Record<string, unknown>>)
@@ -459,18 +527,38 @@ export class AiService {
 				const verdict = String(item.verdict ?? '').trim();
 				const score = Number(item.score ?? NaN);
 				const betterLine = String(item.betterLine ?? '').trim();
+				const betterLineLabel = this.localizedText(language, {
+					en: 'Better line',
+					ko: '더 나은 라인',
+					ja: 'より良いライン',
+				});
+				const verdictLabel = this.localizedText(language, {
+					en: 'Verdict',
+					ko: '평가',
+					ja: '評価',
+				});
+				const neutralText = this.localizedText(language, {
+					en: 'neutral',
+					ko: '중립',
+					ja: '中立',
+				});
 
 				const chunks: string[] = [];
 				if (analysis) chunks.push(analysis);
-				if (betterLine) chunks.push(`Better line: ${betterLine}`);
+				if (betterLine) chunks.push(`${betterLineLabel}: ${betterLine}`);
 				if (verdict || Number.isFinite(score)) {
 					const scoreLabel = Number.isFinite(score) ? ` (${score})` : '';
-					chunks.push(`Verdict: ${verdict || 'neutral'}${scoreLabel}`);
+					chunks.push(`${verdictLabel}: ${verdict || neutralText}${scoreLabel}`);
 				}
 
 				byOrder.set(
 					order,
-					chunks.join('\n').trim() || '해당 액션에 대한 상세 텍스트가 제공되지 않았습니다.',
+					chunks.join('\n').trim() ||
+						this.localizedText(language, {
+							en: 'No detailed text was provided for this action.',
+							ko: '해당 액션에 대한 상세 텍스트가 제공되지 않았습니다.',
+							ja: 'このアクションに対する詳細テキストは提供されませんでした。',
+						}),
 				);
 			}
 
@@ -478,7 +566,11 @@ export class AiService {
 				order: action.order,
 				analysis:
 					byOrder.get(action.order) ??
-					`Action #${action.order}: ${action.action.toUpperCase()} / ${action.street} - 기본 리뷰를 생성했습니다.`,
+					this.localizedText(language, {
+						en: `Action #${action.order}: ${action.action.toUpperCase()} / ${action.street} - Generated a default review.`,
+						ko: `액션 #${action.order}: ${action.action.toUpperCase()} / ${action.street} - 기본 리뷰를 생성했습니다.`,
+						ja: `アクション #${action.order}: ${action.action.toUpperCase()} / ${action.street} - デフォルトレビューを生成しました。`,
+					}),
 			}));
 
 			return {
@@ -491,10 +583,18 @@ export class AiService {
 			return {
 				provider,
 				model,
-				summary: 'LLM 응답 지연으로 폴백 리뷰를 생성했습니다.',
+				summary: this.localizedText(language, {
+					en: 'Generated fallback reviews due to LLM timeout.',
+					ko: 'LLM 응답 지연으로 폴백 리뷰를 생성했습니다.',
+					ja: 'LLMの応答遅延によりフォールバックレビューを生成しました。',
+				}),
 				reviews: actions.map((action) => ({
 					order: action.order,
-					analysis: `Action #${action.order}: ${action.action.toUpperCase()} / ${action.street} - 타임아웃으로 상세 분석을 생성하지 못했습니다.`,
+					analysis: this.localizedText(language, {
+						en: `Action #${action.order}: ${action.action.toUpperCase()} / ${action.street} - Detailed analysis could not be generated due to timeout.`,
+						ko: `액션 #${action.order}: ${action.action.toUpperCase()} / ${action.street} - 타임아웃으로 상세 분석을 생성하지 못했습니다.`,
+						ja: `アクション #${action.order}: ${action.action.toUpperCase()} / ${action.street} - タイムアウトにより詳細分析を生成できませんでした。`,
+					}),
 				})),
 			};
 		}

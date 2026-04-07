@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsEnum, IsOptional, IsString } from 'class-validator';
+import { PreferredLanguage } from '../../common/enums/language.enum';
 import { LlmProvider } from '../../common/enums/room.enum';
 
 export class AnalyzeHandDto {
@@ -17,4 +18,9 @@ export class AnalyzeHandDto {
   @IsOptional()
   @IsBoolean()
   includePremiumAnalysis?: boolean;
+
+  @ApiPropertyOptional({ enum: PreferredLanguage, default: PreferredLanguage.EN })
+  @IsOptional()
+  @IsEnum(PreferredLanguage)
+  language?: PreferredLanguage;
 }

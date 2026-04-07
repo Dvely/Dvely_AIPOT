@@ -19,6 +19,7 @@ import {
 	RoomStatus,
 	RoomType,
 } from '../common/enums/room.enum';
+import { PreferredLanguage } from '../common/enums/language.enum';
 import { UserRole } from '../common/enums/role.enum';
 import {
 	AvatarConfig,
@@ -130,6 +131,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			for (const user of parsed.users ?? []) {
 				const normalizedUser: UserRecord = {
 					...user,
+					preferredLanguage:
+						user.preferredLanguage ?? PreferredLanguage.EN,
 					balanceAmount: Number.isFinite(user.balanceAmount)
 						? user.balanceAmount
 						: this.defaultBalanceForRole(user.role),
@@ -202,6 +205,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			nickname: params.nickname.trim(),
 			passwordHash: params.passwordHash,
 			role: params.role,
+			preferredLanguage: PreferredLanguage.EN,
 			balanceAmount: this.defaultBalanceForRole(params.role),
 			avatar: { ...DEFAULT_AVATAR },
 			stats: {
@@ -237,6 +241,19 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			throw new NotFoundException('사용자를 찾을 수 없습니다.');
 		}
 		user.avatar = { ...avatar };
+		this.markDirty();
+		return user;
+	}
+
+	updateUserPreferredLanguage(
+		userId: string,
+		preferredLanguage: PreferredLanguage,
+	): UserRecord {
+		const user = this.users.get(userId);
+		if (!user) {
+			throw new NotFoundException('사용자를 찾을 수 없습니다.');
+		}
+		user.preferredLanguage = preferredLanguage;
 		this.markDirty();
 		return user;
 	}

@@ -564,6 +564,7 @@ export function PlayTable() {
   const [botModelId, setBotModelId] = useState<string>("local-qwen");
   const [botStyle, setBotStyle] = useState<BotStyle>("balanced");
   const lastAnimatedLiveHandIdRef = useRef<string | null>(null);
+  const autoNextHandKeyRef = useRef<string | null>(null);
 
   // Raise Action State
   const [isRaising, setIsRaising] = useState(false);
@@ -596,7 +597,9 @@ export function PlayTable() {
     : roomMode === "cash"
       ? "Cash Game"
       : "Game Table";
-  const autoContinueBotRoom = false;
+  const autoContinueBotRoom = Boolean(
+    isLiveMode && roomMode === "ai_bot" && liveRoom?.isPrivate,
+  );
   const isHeroLiveTurn = Boolean(
     isLiveMode &&
     heroSeatId !== null &&
@@ -638,6 +641,36 @@ export function PlayTable() {
       setPendingHeroAction(false);
     }
   }, [isLiveMode, heroSeatId, liveGame?.gameState?.currentTurnSeatId]);
+
+  useEffect(() => {
+    if (!isLiveMode || !autoContinueBotRoom || !canManageLiveRoom) return;
+
+    if (liveRoom?.status !== "HAND_ENDED") {
+      autoNextHandKeyRef.current = null;
+      return;
+    }
+
+    if (heroSeatId === null || userState !== "playing") return;
+
+    const handKey = `${roomId}:${liveGame?.gameState?.handId ?? "ended"}`;
+    if (autoNextHandKeyRef.current === handKey) return;
+    autoNextHandKeyRef.current = handKey;
+
+    const timer = setTimeout(() => {
+      void handleLiveStartOrNext();
+    }, QUICK_RESULT_DISPLAY_MS);
+
+    return () => clearTimeout(timer);
+  }, [
+    isLiveMode,
+    autoContinueBotRoom,
+    canManageLiveRoom,
+    liveRoom?.status,
+    heroSeatId,
+    userState,
+    roomId,
+    liveGame?.gameState?.handId,
+  ]);
 
   useEffect(() => {
     if (showdownHoldUntil <= 0) return;
@@ -868,7 +901,12 @@ export function PlayTable() {
       }
 
       if (room.status === "HAND_ENDED") {
-        setLog("Hand complete. Ready for next hand.");
+        const shouldAutoContinue = room.type === "ai_bot" && room.isPrivate;
+        setLog(
+          shouldAutoContinue
+            ? "Hand complete. Auto starting next hand..."
+            : "Hand complete. Ready for next hand.",
+        );
       } else if (room.status === "IN_HAND") {
         setLog("Live hand in progress");
       } else if (!room.isPrivate) {
