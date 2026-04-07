@@ -4,10 +4,213 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   Coins, Menu, Crown, Settings, Plus, Target, Users, Swords, BookOpen, X, Lock, Unlock, LogOut, CheckCircle2, ShoppingBag, Info, Trophy, Timer, Volume2, Globe, ChevronRight
 } from "lucide-react";
-import { getCurrentAuth, signOut } from "../auth";
+import {
+  getCurrentAuth,
+  getCurrentPreferredLanguage,
+  getCurrentUserId,
+  patchSessionUser,
+  PreferredLanguage,
+  signOut,
+} from "../auth";
+import { apiFetch } from "../api";
+import { useI18n } from "../i18n";
+
+type LobbyRoomType = "ai_bot" | "cash" | "tournament";
+
+interface LobbyTableSummary {
+  id: string;
+  name: string;
+  type: LobbyRoomType;
+  status: string;
+  hostUserId: string;
+  blindSmall: number;
+  blindBig: number;
+  currentPlayers: number;
+  humanPlayers: number;
+  maxPlayers: number;
+  isPrivate: boolean;
+  hasBeenPublic: boolean;
+  code?: string;
+}
+
+interface LobbyLeaderboardEntry {
+  id: string;
+  nickname: string;
+  role: "guest" | "free" | "pro";
+  balanceAmount: number;
+}
+
+interface LobbyTableItem {
+  id: string;
+  type: "bot" | "cash" | "tournament";
+  name: string;
+  stakes: string;
+  players: number;
+  max: number;
+  isPrivate: boolean;
+  status?: string;
+  prizePool?: string;
+  itm?: string;
+  buyIn?: string;
+  highlight?: boolean;
+  code?: string;
+}
+
+interface ProfileAvatar {
+  hairStyle: string;
+  skinTone: string;
+  hairColor: string;
+  faceType: string;
+  eyeType: string;
+  mouthType: string;
+  outfit: string;
+  accessory?: string;
+}
+
+interface ProfileMeResponse {
+  id: string;
+  nickname: string;
+  role: "guest" | "free" | "pro";
+  preferredLanguage: PreferredLanguage;
+  balanceAmount: number;
+  avatar: ProfileAvatar;
+  subscriptionActive: boolean;
+  createdAt: string;
+}
+
+interface ProfileStatsResponse {
+  playedHands: number;
+  winHands: number;
+  biggestPot: number;
+  totalProfit: number;
+  winRate: number;
+}
+
+const AVATAR_TOP_OPTIONS = [
+  { value: "shortFlat", label: "Short Flat" },
+  { value: "shortCurly", label: "Short Curly" },
+  { value: "straight01", label: "Straight" },
+  { value: "longButNotTooLong", label: "Long" },
+  { value: "bob", label: "Bob" },
+  { value: "hat", label: "Hat" },
+  { value: "hijab", label: "Hijab" },
+  { value: "turban", label: "Turban" },
+];
+
+const AVATAR_OUTFIT_OPTIONS = [
+  { value: "hoodie", label: "Hoodie" },
+  { value: "blazerAndShirt", label: "Blazer Shirt" },
+  { value: "blazerAndSweater", label: "Blazer Sweater" },
+  { value: "graphicShirt", label: "Graphic Shirt" },
+  { value: "shirtCrewNeck", label: "Crew Neck" },
+  { value: "shirtVNeck", label: "V-Neck" },
+];
+
+const AVATAR_EYE_OPTIONS = [
+  { value: "default", label: "Default" },
+  { value: "happy", label: "Happy" },
+  { value: "wink", label: "Wink" },
+  { value: "surprised", label: "Surprised" },
+  { value: "squint", label: "Squint" },
+];
+
+const AVATAR_MOUTH_OPTIONS = [
+  { value: "smile", label: "Smile" },
+  { value: "default", label: "Default" },
+  { value: "serious", label: "Serious" },
+  { value: "sad", label: "Sad" },
+  { value: "twinkle", label: "Twinkle" },
+];
+
+const AVATAR_FACE_OPTIONS = [
+  { value: "default", label: "Default" },
+  { value: "defaultNatural", label: "Natural" },
+  { value: "raisedExcited", label: "Raised" },
+  { value: "sadConcerned", label: "Concerned" },
+  { value: "upDown", label: "Up/Down" },
+];
+
+const AVATAR_SKIN_COLORS = ["ffdbb4", "edb98a", "d08b5b", "ae5d29", "614335", "fd9841", "f8d25c"];
+const AVATAR_HAIR_COLORS = ["2c1b18", "a55728", "724133", "d6b370", "c93305", "f59797", "e8e1e1"];
+
+const LEGACY_HAIR_COLOR_MAP: Record<string, string> = {
+  black: "2c1b18",
+  blonde: "d6b370",
+  brown: "724133",
+  red: "c93305",
+  pastelpink: "f59797",
+  platinum: "e8e1e1",
+};
+
+const HEX_COLOR_REGEX = /^[a-fA-F0-9]{6}$/;
+
+function hasOption(options: Array<{ value: string }>, value: string) {
+  return options.some((option) => option.value === value);
+}
+
+function normalizeAvatarValue(avatar: ProfileAvatar) {
+  const legacyHair = LEGACY_HAIR_COLOR_MAP[avatar.hairColor.toLowerCase()];
+  const normalizedHair = HEX_COLOR_REGEX.test(avatar.hairColor)
+    ? avatar.hairColor.toLowerCase()
+    : legacyHair ?? "2c1b18";
+  const normalizedSkin = HEX_COLOR_REGEX.test(avatar.skinTone)
+    ? avatar.skinTone.toLowerCase()
+    : "ffdbb4";
+
+  return {
+    top: hasOption(AVATAR_TOP_OPTIONS, avatar.hairStyle) ? avatar.hairStyle : "shortFlat",
+    skinColor: AVATAR_SKIN_COLORS.includes(normalizedSkin) ? normalizedSkin : "ffdbb4",
+    hairColor: AVATAR_HAIR_COLORS.includes(normalizedHair) ? normalizedHair : "2c1b18",
+    face: hasOption(AVATAR_FACE_OPTIONS, avatar.faceType) ? avatar.faceType : "default",
+    clothing: hasOption(AVATAR_OUTFIT_OPTIONS, avatar.outfit) ? avatar.outfit : "hoodie",
+    mouth: hasOption(AVATAR_MOUTH_OPTIONS, avatar.mouthType) ? avatar.mouthType : "smile",
+    eyes: hasOption(AVATAR_EYE_OPTIONS, avatar.eyeType) ? avatar.eyeType : "default",
+  };
+}
+
+const fallbackTournamentTables: LobbyTableItem[] = [
+  {
+    id: "tournament-fallback",
+    type: "tournament",
+    name: "Sunday Live Tournament",
+    stakes: "-",
+    players: 72,
+    max: 180,
+    isPrivate: false,
+    status: "Registering",
+    buyIn: "TBD",
+    prizePool: "TBD",
+    itm: "TBD",
+  },
+];
+
+function toLobbyTable(summary: LobbyTableSummary): LobbyTableItem {
+  const mappedType: LobbyTableItem["type"] =
+    summary.type === "ai_bot" ? "bot" : summary.type;
+  const stakes =
+    Number.isFinite(summary.blindSmall) && Number.isFinite(summary.blindBig)
+      ? `${summary.blindSmall}/${summary.blindBig}`
+      : "-";
+
+  return {
+    id: summary.id,
+    type: mappedType,
+    name: summary.name,
+    stakes,
+    players: summary.currentPlayers,
+    max: summary.maxPlayers,
+    isPrivate: summary.isPrivate,
+    status: summary.status,
+    code: summary.code,
+    buyIn: summary.type === "tournament" ? "TBD" : undefined,
+    prizePool: summary.type === "tournament" ? "TBD" : undefined,
+    itm: summary.type === "tournament" ? "TBD" : undefined,
+  };
+}
 
 export function Lobby() {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState("QUICK PLAY");
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [passwordModalTable, setPasswordModalTable] = useState<any | null>(null);
@@ -16,102 +219,356 @@ export function Lobby() {
   const [showMenu, setShowMenu] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showHelpSupportModal, setShowHelpSupportModal] = useState(false);
   const [profileTab, setProfileTab] = useState<"stats" | "avatar" | "settings">("stats");
   const [avatarOptions, setAvatarOptions] = useState({
-    top: "shortHairShortFlat",
+    top: "shortFlat",
     skinColor: "ffdbb4",
-    hairColor: "black",
+    hairColor: "2c1b18",
+    face: "default",
     clothing: "hoodie",
     mouth: "smile",
     eyes: "default"
   });
+  const [tables, setTables] = useState<LobbyTableItem[]>([]);
+  const [tableLoading, setTableLoading] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<LobbyLeaderboardEntry[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [joinCode, setJoinCode] = useState("");
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const [profileMe, setProfileMe] = useState<ProfileMeResponse | null>(null);
+  const [profileStats, setProfileStats] = useState<ProfileStatsResponse | null>(null);
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [settingsLanguage, setSettingsLanguage] = useState<PreferredLanguage>(
+    getCurrentPreferredLanguage(),
+  );
+  const [settingsBusy, setSettingsBusy] = useState(false);
   
-  const { isLoggedIn, isPro, userName } = getCurrentAuth();
+  const { isLoggedIn, isPro, userName, balanceAmount } = getCurrentAuth();
+  const currentUserId = getCurrentUserId();
+
+  const navigateToRoom = (roomId: string, state?: Record<string, unknown>) => {
+    const query = new URLSearchParams({ roomId }).toString();
+    navigate(`/play?${query}`, {
+      state: {
+        ...(state ?? {}),
+        roomId,
+      },
+    });
+  };
+
+  const applyAvatarOptions = (avatar: ProfileAvatar) => {
+    setAvatarOptions(normalizeAvatarValue(avatar));
+  };
+
+  const loadProfile = async () => {
+    if (!isLoggedIn) return;
+
+    setProfileLoading(true);
+    try {
+      const [me, stats] = await Promise.all([
+        apiFetch<ProfileMeResponse>("/profile/me"),
+        apiFetch<ProfileStatsResponse>("/profile/stats"),
+      ]);
+
+      setProfileMe(me);
+      setProfileStats(stats);
+      applyAvatarOptions(me.avatar);
+      setSettingsLanguage(me.preferredLanguage ?? "en");
+      patchSessionUser({ preferredLanguage: me.preferredLanguage ?? "en" });
+      setProfileError("");
+    } catch (error) {
+      setProfileError(
+        error instanceof Error
+          ? error.message
+          : t("Failed to load profile information."),
+      );
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  const saveAvatar = async () => {
+    if (!isLoggedIn) return;
+
+    setProfileBusy(true);
+    try {
+      await apiFetch("/profile/avatar", {
+        method: "PATCH",
+        body: JSON.stringify({
+          hairStyle: avatarOptions.top,
+          skinTone: avatarOptions.skinColor,
+          hairColor: avatarOptions.hairColor,
+          faceType: avatarOptions.face,
+          eyeType: avatarOptions.eyes,
+          mouthType: avatarOptions.mouth,
+          outfit: avatarOptions.clothing,
+        }),
+      });
+
+      await loadProfile();
+      setProfileTab("stats");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : t("Failed to save avatar."));
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const updatePassword = async () => {
+    if (!isLoggedIn) return;
+
+    if (!passwordForm.currentPassword || !passwordForm.newPassword) {
+      alert(t("Enter current and new password."));
+      return;
+    }
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      alert(t("Password confirmation does not match."));
+      return;
+    }
+
+    setProfileBusy(true);
+    try {
+      await apiFetch("/profile/password", {
+        method: "POST",
+        body: JSON.stringify({
+          currentPassword: passwordForm.currentPassword,
+          newPassword: passwordForm.newPassword,
+        }),
+      });
+
+      setPasswordForm({
+        currentPassword: "",
+        newPassword: "",
+        confirmPassword: "",
+      });
+      setProfileTab("stats");
+      alert(t("Password has been updated."));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : t("Failed to update password."));
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const saveSettings = async () => {
+    if (!isLoggedIn) {
+      setShowSettingsModal(false);
+      return;
+    }
+
+    setSettingsBusy(true);
+    try {
+      const updated = await apiFetch<{ preferredLanguage: PreferredLanguage }>(
+        "/profile/preferences",
+        {
+          method: "PATCH",
+          body: JSON.stringify({ preferredLanguage: settingsLanguage }),
+        },
+      );
+
+      patchSessionUser({ preferredLanguage: updated.preferredLanguage });
+      setProfileMe((prev) =>
+        prev
+          ? {
+              ...prev,
+              preferredLanguage: updated.preferredLanguage,
+            }
+          : prev,
+      );
+      setShowSettingsModal(false);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : t("Failed to save settings."));
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
+
+  const loadTables = async () => {
+    setTableLoading(true);
+    try {
+      const list = await apiFetch<LobbyTableSummary[]>("/lobby/tables");
+      const mapped = Array.isArray(list) ? list.map(toLobbyTable) : [];
+      const hasTournament = mapped.some((table) => table.type === "tournament");
+      setTables(hasTournament ? mapped : [...mapped, ...fallbackTournamentTables]);
+    } catch {
+      setTables([...fallbackTournamentTables]);
+    } finally {
+      setTableLoading(false);
+    }
+  };
+
+  const loadLeaderboard = async () => {
+    setLeaderboardLoading(true);
+    try {
+      const ranking = await apiFetch<LobbyLeaderboardEntry[]>('/lobby/leaderboard');
+      setLeaderboard(Array.isArray(ranking) ? ranking : []);
+    } catch {
+      setLeaderboard([]);
+    } finally {
+      setLeaderboardLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadTables();
+  }, []);
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      void loadProfile();
+    }
+  }, [isLoggedIn]);
+
+  useEffect(() => {
+    if (showProfileModal && isLoggedIn) {
+      void loadProfile();
+    }
+  }, [showProfileModal, isLoggedIn]);
+
+  useEffect(() => {
+    if (showSettingsModal && isLoggedIn) {
+      void loadProfile();
+    }
+  }, [showSettingsModal, isLoggedIn]);
+
+  useEffect(() => {
+    if (activeTab === 'LEADERBOARD') {
+      void loadLeaderboard();
+    }
+  }, [activeTab]);
 
   const gameModes = [
     {
       id: "ai-bot",
-      title: "AI Bot Training",
+      title: t("AI Bot Training"),
       icon: <Swords className="w-8 h-8 text-white" />,
       color: "from-blue-500 to-cyan-500",
-      description: "Practice against AI opponents",
+      description: t("Practice against AI opponents"),
     },
     {
       id: "cash-game",
-      title: "Cash Game",
+      title: t("Cash Game"),
       icon: <Coins className="w-8 h-8 text-white" />,
       color: "from-green-500 to-emerald-500",
-      description: "Join public cash tables",
+      description: t("Join public cash tables"),
     },
     {
       id: "tournament",
-      title: "Tournament",
+      title: t("Tournament"),
       icon: <Crown className="w-8 h-8 text-white" />,
       color: "from-purple-500 to-fuchsia-500",
-      description: "Compete for the top prize",
+      description: t("Compete for the top prize"),
       locked: !isLoggedIn,
     },
     {
       id: "review",
-      title: "Hand Review",
+      title: t("Hand Review"),
       icon: <BookOpen className="w-8 h-8 text-white" />,
       color: "from-orange-500 to-amber-500",
-      description: "Analyze your past games",
-      locked: !isLoggedIn,
+      description: t("Analyze your past games"),
+      locked: !isPro,
     },
   ];
 
-  const mockTables = [
-    { id: "t1", type: "tournament", name: "Seoul Qualifier (Lvl 4)", stakes: "100/200", players: 128, max: 500, isPrivate: false, status: "Late Reg", prizePool: "$50,000", itm: "Top 36", buyIn: "$100" },
-    { id: "t2", type: "tournament", name: "Sunday Million", stakes: "500/1K", players: 450, max: 1000, isPrivate: false, status: "Running", prizePool: "$1,000,000", itm: "Top 100", buyIn: "$500" },
-    { id: "ai-practice", type: "bot", name: "AI Bot Practice Room", stakes: "0/0", players: 1, max: 8, isPrivate: false, highlight: true },
-    { id: 1, type: "cash", name: "Seoul High Roller", stakes: "500/1K", players: 4, max: 8, isPrivate: false },
-    { id: 2, type: "cash", name: "Beginner Friendly", stakes: "50/100", players: 2, max: 8, isPrivate: false },
-    { id: 3, type: "cash", name: "VIP Lounge", stakes: "1K/2K", players: 5, max: 8, isPrivate: true },
-    { id: 4, type: "cash", name: "Friday Night Poker", stakes: "100/200", players: 6, max: 8, isPrivate: true },
-  ];
-
-  const mockLeaderboard = [
-    { rank: 1, name: "PokerKing99", chips: "$45,200,000", isMe: false },
-    { rank: 2, name: "AllInAl", chips: "$38,150,000", isMe: false },
-    { rank: 3, name: "SeoulShark", chips: "$31,900,000", isMe: false },
-    { rank: 4, name: "RiverRat", chips: "$28,400,000", isMe: false },
-    { rank: 42, name: isLoggedIn ? userName : "Guest_1092", chips: "$10,420", isMe: true },
-  ];
-
-  const mockQuests = [
-    { id: 1, title: "Play 50 Hands", progress: 32, max: 50, reward: "$1,000" },
-    { id: 2, title: "Win 3 pots at Showdown", progress: 1, max: 3, reward: "$500" },
-    { id: 3, title: "Review 1 Hand", progress: 0, max: 1, reward: "Pro Ticket" },
-  ];
-
-  const handleTableClick = (table: any) => {
+  const handleTableClick = async (table: LobbyTableItem) => {
     if (table.type === "tournament" && !isLoggedIn) {
-      alert("Guest cannot enter tournaments. Please sign in with your account.");
+      alert(t("Guest cannot enter tournaments."));
       return;
     }
+
+    if (table.players >= table.max) {
+      navigateToRoom(table.id, {
+        mode: table.type,
+        table,
+        spectate: true,
+        allowStartControl: false,
+      });
+      return;
+    }
+
     if (table.isPrivate) {
       setPasswordModalTable(table);
+      setJoinCode(table.code ?? "");
     } else {
-      navigate("/play", { state: { mode: table.type, table: table, spectate: table.players >= table.max } });
+      try {
+        await apiFetch(`/rooms/${table.id}/join-public`, { method: "POST" });
+        navigateToRoom(table.id, {
+          mode: table.type,
+          table,
+          spectate: false,
+          allowStartControl: false,
+        });
+      } catch (error) {
+        alert(error instanceof Error ? error.message : t("Failed to join table."));
+      }
     }
   };
 
-  const handleGameModeClick = (id: string) => {
+  const handleGameModeClick = async (id: string) => {
     if (id === "review") {
-      if (!isPro) return alert("Hand Review requires a PRO subscription.");
+      if (!isPro) {
+        alert(t("Hand Review is available for PRO members only."));
+        return;
+      }
       navigate("/review");
+      return;
     }
-    else if (id === "tournament") {
-      if (!isLoggedIn) return alert("Guest cannot play tournaments.");
-      navigate("/play", { state: { mode: "tournament" } });
+
+    if (id === "tournament" && !isLoggedIn) {
+      alert(t("Guest cannot play tournaments."));
+      return;
     }
-    else navigate("/play", { state: { mode: "cash" } });
+
+    const roomType: LobbyRoomType =
+      id === "ai-bot" ? "ai_bot" : id === "tournament" ? "tournament" : "cash";
+
+    try {
+      const result = await apiFetch<{ matched: boolean; roomId?: string; reason?: string }>(
+        "/lobby/quick-play",
+        {
+          method: "POST",
+          body: JSON.stringify({ roomType }),
+        },
+      );
+
+      if (!result.matched || !result.roomId) {
+        alert(result.reason ?? t("No matching room available."));
+        return;
+      }
+
+      navigateToRoom(result.roomId, {
+        mode: id === "ai-bot" ? "bot" : id,
+        allowStartControl: false,
+      });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : t("Failed to connect quick play."));
+    }
   };
 
-  const tournaments = mockTables.filter(t => t.type === "tournament");
-  const cashGames = mockTables.filter(t => t.type === "cash");
-  const botGames = mockTables.filter(t => t.type === "bot");
+  const tournaments = tables.filter((t) => t.type === "tournament");
+  const cashGames = tables.filter((t) => t.type === "cash");
+  const botGames = tables.filter((t) => t.type === "bot");
+  const walletAmount = isLoggedIn
+    ? (profileMe?.balanceAmount ?? balanceAmount)
+    : 1000;
+  const avatarSeed = isLoggedIn ? (profileMe?.nickname ?? userName) : "Guest";
+  const avatarPreviewUrl =
+    `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(avatarSeed)}` +
+    `&top=${encodeURIComponent(avatarOptions.top)}` +
+    `&skinColor=${encodeURIComponent(avatarOptions.skinColor)}` +
+    `&hairColor=${encodeURIComponent(avatarOptions.hairColor)}` +
+    `&clothing=${encodeURIComponent(avatarOptions.clothing)}` +
+    `&mouth=${encodeURIComponent(avatarOptions.mouth)}` +
+    `&eyes=${encodeURIComponent(avatarOptions.eyes)}` +
+    `&eyebrows=${encodeURIComponent(avatarOptions.face)}`;
 
   return (
     <div className="flex flex-col w-full h-full bg-[#1A1B41] font-sans text-white relative overflow-hidden select-none">
@@ -125,6 +582,11 @@ export function Lobby() {
               className="w-8 h-8 cursor-pointer hover:text-cyan-400 transition" 
               onClick={() => setShowMenu(true)}
             />
+            <img
+              src="/main.png"
+              alt="AIPOT logo"
+              className="h-8 w-8 rounded-full border border-cyan-300/30 object-cover"
+            />
             <h1 className="text-2xl font-black italic tracking-wider">AIPOT</h1>
           </div>
           <button 
@@ -132,7 +594,7 @@ export function Lobby() {
             className="hidden md:flex items-center gap-2 px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded-full font-bold shadow-inner border border-indigo-400/30 transition"
           >
             <Target className="w-4 h-4 text-cyan-300" />
-            <span>Daily Missions</span>
+            <span>{t("Daily Missions")}</span>
           </button>
         </div>
 
@@ -152,7 +614,7 @@ export function Lobby() {
             className="flex items-center bg-gradient-to-r from-yellow-600 to-yellow-500 rounded-full pr-2 pl-2 py-1 shadow-lg border border-yellow-400 cursor-pointer hover:scale-105 transition-transform"
           >
             <Coins className="w-5 h-5 text-white mr-2" />
-            <span className="font-black text-lg text-white">$10,420</span>
+            <span className="font-black text-lg text-white">${walletAmount.toLocaleString()}</span>
             <button className="ml-3 bg-green-500 hover:bg-green-400 p-1 rounded-full shadow-inner transition">
               <Plus className="w-4 h-4 text-white" />
             </button>
@@ -165,12 +627,12 @@ export function Lobby() {
         {/* Left Sidebar */}
         <aside className="w-64 flex flex-col gap-4 shrink-0 hidden md:flex">
           <div className="bg-[#242754] rounded-2xl p-4 flex flex-col gap-3 border border-white/5 shadow-xl">
-            <h2 className="text-center font-bold text-slate-300 text-sm tracking-widest mb-2">CUSTOMIZE</h2>
+            <h2 className="text-center font-bold text-slate-300 text-sm tracking-widest mb-2">{t("Customize")}</h2>
             
             <button 
               onClick={() => {
                 if (!isLoggedIn) {
-                  alert("Guest cannot create tables.");
+                  alert(t("Guest cannot create tables."));
                   return;
                 }
                 setShowCreateModal(true);
@@ -178,10 +640,10 @@ export function Lobby() {
               className={`w-full font-black py-4 rounded-xl transition-all flex justify-center items-center gap-2 uppercase ${!isLoggedIn ? 'bg-slate-700 text-slate-400 shadow-[0_4px_0_#334155] opacity-80' : 'bg-gradient-to-b from-yellow-400 to-orange-500 text-white shadow-[0_4px_0_#B45309] hover:translate-y-1 hover:shadow-[0_0px_0_#B45309]'}`}
             >
               {!isLoggedIn ? <Lock className="w-5 h-5" /> : <Users className="w-5 h-5" />}
-              Create Table
+              {t("Create Table")}
             </button>
             <p className="text-xs text-center text-slate-400 font-medium px-2 mt-2">
-              Create a custom table and invite friends to play securely.
+              {t("Create a custom table and invite friends to play securely.")}
             </p>
           </div>
 
@@ -190,16 +652,16 @@ export function Lobby() {
             className="mt-auto bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl p-4 shadow-lg border border-white/10 relative overflow-hidden group cursor-pointer"
           >
              <div className="absolute -right-4 -top-4 w-24 h-24 bg-white/20 rounded-full blur-xl group-hover:scale-150 transition-transform"></div>
-             <p className="text-xs font-bold text-cyan-300 uppercase mb-1">PRO BUNDLE</p>
-             <h3 className="font-black text-lg leading-tight">Get 2x Chips & Ad-free</h3>
-             <button className="mt-3 bg-white text-indigo-900 font-bold px-4 py-1.5 rounded-full text-sm hover:bg-slate-200 w-full transition shadow-md">Store</button>
+             <p className="text-xs font-bold text-cyan-300 uppercase mb-1">{t("PRO Bundle")}</p>
+             <h3 className="font-black text-lg leading-tight">{t("Get 2x Chips & Ad-free")}</h3>
+             <button className="mt-3 bg-white text-indigo-900 font-bold px-4 py-1.5 rounded-full text-sm hover:bg-slate-200 w-full transition shadow-md">{t("Store")}</button>
           </div>
         </aside>
 
         {/* Center Panel */}
         <main className="flex-1 bg-[#242754] rounded-2xl border border-white/5 shadow-xl flex flex-col overflow-hidden relative">
           <div className="flex bg-[#1A1C3E] border-b border-white/10 shrink-0 overflow-x-auto no-scrollbar">
-            {["QUICK PLAY", "TABLES", "LEADERBOARD", "QUESTS"].map((tab) => (
+            {[("QUICK PLAY"), ("TABLES"), ("LEADERBOARD"), ("QUESTS")].map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -209,7 +671,13 @@ export function Lobby() {
                     : "text-slate-400 hover:text-white"
                 }`}
               >
-                {tab}
+                {tab === "QUICK PLAY"
+                  ? t("Quick Play")
+                  : tab === "TABLES"
+                    ? t("Tables")
+                    : tab === "LEADERBOARD"
+                      ? t("Leaderboard")
+                      : t("Quests")}
               </button>
             ))}
           </div>
@@ -228,7 +696,7 @@ export function Lobby() {
                     whileTap={{ scale: (mode as any).locked ? 1 : 0.98 }}
                     onClick={() => {
                       if ((mode as any).locked) {
-                        alert("Guest cannot use this feature.");
+                        alert(t("Guest cannot use this feature."));
                         return;
                       }
                       handleGameModeClick(mode.id);
@@ -242,7 +710,7 @@ export function Lobby() {
                       <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-20 backdrop-blur-sm">
                         <div className="flex flex-col items-center gap-2">
                           <Lock className="w-8 h-8 text-white" />
-                          <span className="text-white font-bold text-sm tracking-wider uppercase">Pro Only</span>
+                          <span className="text-white font-bold text-sm tracking-wider uppercase">{t("PRO Only")}</span>
                         </div>
                       </div>
                     )}
@@ -259,7 +727,7 @@ export function Lobby() {
                 {tournaments.length > 0 && (
                   <div className="flex flex-col gap-3">
                     <h2 className="text-xl font-black text-white flex items-center gap-2">
-                      <Trophy className="text-yellow-400" /> Live Tournaments
+                      <Trophy className="text-yellow-400" /> {t("Live Tournaments")}
                     </h2>
                     {tournaments.map((table, idx) => (
                       <motion.div 
@@ -295,7 +763,7 @@ export function Lobby() {
                           </div>
                           <div className="flex items-center gap-4">
                             <div className="flex flex-col items-end">
-                              <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Entries</span>
+                              <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">{t("Entries")}</span>
                               <div className="flex items-center gap-1.5 font-mono text-sm font-bold text-white">
                                 <Users className="w-4 h-4 text-slate-400"/>
                                 {table.players}/{table.max}
@@ -306,27 +774,27 @@ export function Lobby() {
                                  onClick={(e) => { 
                                    e.stopPropagation(); 
                                    if (!isLoggedIn) {
-                                     alert("Guest cannot watch tournaments.");
+                                     alert(t("Guest cannot watch tournaments."));
                                      return;
                                    }
                                    setSpectateTournamentModal(table); 
                                  }}
                                  className={`px-6 py-2 rounded-lg font-black uppercase tracking-wider text-sm shadow-md transition ${!isLoggedIn ? 'bg-slate-700 text-slate-500 opacity-70 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-500 text-white hover:shadow-[0_0_15px_rgba(147,51,234,0.5)]'}`}
                                >
-                                 {!isLoggedIn ? <Lock className="w-4 h-4 mx-auto" /> : "Watch"}
+                                {!isLoggedIn ? <Lock className="w-4 h-4 mx-auto" /> : t("Watch")}
                                </button>
                                <button 
                                  onClick={(e) => { 
                                    e.stopPropagation(); 
                                    if (!isLoggedIn) {
-                                     alert("Guest cannot enter tournaments.");
+                                     alert(t("Guest cannot enter tournaments."));
                                      return;
                                    }
                                    handleTableClick(table); 
                                  }}
                                  className={`px-6 py-2 rounded-lg font-black uppercase tracking-wider text-sm shadow-md transition ${!isLoggedIn ? 'bg-slate-700 text-slate-500 opacity-70 cursor-not-allowed' : 'bg-gradient-to-b from-yellow-400 to-orange-500 text-white hover:shadow-[0_0_15px_rgba(250,204,21,0.5)]'}`}
                                >
-                                 {!isLoggedIn ? <Lock className="w-4 h-4 mx-auto" /> : "Enter"}
+                                {!isLoggedIn ? <Lock className="w-4 h-4 mx-auto" /> : t("Enter")}
                                </button>
                             </div>
                           </div>
@@ -338,7 +806,7 @@ export function Lobby() {
 
                 <div className="flex flex-col gap-3 mt-6">
                   <div className="flex justify-between items-center mb-1">
-                    <h2 className="text-xl font-black text-white flex items-center gap-2"><Target className="text-cyan-400 w-5 h-5"/> AI Bot Games</h2>
+                    <h2 className="text-xl font-black text-white flex items-center gap-2"><Target className="text-cyan-400 w-5 h-5"/>{t("AI Bot Games")}</h2>
                   </div>
                   {botGames.map((table, idx) => (
                       <motion.div 
@@ -353,7 +821,7 @@ export function Lobby() {
                          <div className="flex items-center gap-2">
                            <span className="font-bold text-lg text-cyan-50">{table.name}</span>
                          </div>
-                         <span className="text-sm font-semibold text-slate-400">Blinds: {table.stakes}</span>
+                         <span className="text-sm font-semibold text-slate-400">{t("Blinds")}: {table.stakes}</span>
                       </div>
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-1.5 bg-black/40 px-3 py-1 rounded-full border border-white/5">
@@ -364,7 +832,7 @@ export function Lobby() {
                           onClick={(e) => { e.stopPropagation(); handleTableClick(table); }}
                           className="hidden md:block px-6 py-2 rounded-lg font-bold uppercase tracking-wider text-sm shadow-md transition bg-cyan-600 hover:bg-cyan-500 text-white group-hover:shadow-[0_0_15px_rgba(6,182,212,0.6)]"
                         >
-                          Practice
+                          {t("Practice")}
                         </button>
                       </div>
                     </motion.div>
@@ -373,8 +841,15 @@ export function Lobby() {
 
                 <div className="flex flex-col gap-3 mt-4">
                   <div className="flex justify-between items-center mb-1">
-                    <h2 className="text-xl font-black text-white flex items-center gap-2"><Coins className="text-green-400 w-5 h-5"/> Cash Games</h2>
-                    <button className="text-cyan-400 text-sm font-bold hover:text-cyan-300">Refresh</button>
+                    <h2 className="text-xl font-black text-white flex items-center gap-2"><Coins className="text-green-400 w-5 h-5"/> {t("Cash Games")}</h2>
+                    <button
+                      onClick={() => {
+                        void loadTables();
+                      }}
+                      className="text-cyan-400 text-sm font-bold hover:text-cyan-300"
+                    >
+                      {tableLoading ? t("Loading...") : t("Refresh")}
+                    </button>
                   </div>
                   
                   {cashGames.map((table, idx) => (
@@ -391,7 +866,7 @@ export function Lobby() {
                            {table.isPrivate ? <Lock className="w-4 h-4 text-red-400" /> : <Unlock className="w-4 h-4 text-green-400" />}
                            <span className="font-bold text-lg">{table.name}</span>
                          </div>
-                         <span className="text-sm font-semibold text-slate-400">Blinds: ${table.stakes}</span>
+                         <span className="text-sm font-semibold text-slate-400">{t("Blinds")}: {table.stakes}</span>
                       </div>
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-1.5 bg-black/40 px-3 py-1 rounded-full border border-white/5">
@@ -402,7 +877,7 @@ export function Lobby() {
                           onClick={(e) => { e.stopPropagation(); handleTableClick(table); }}
                           className={`hidden md:block px-6 py-2 rounded-lg font-bold uppercase tracking-wider text-sm shadow-md transition ${table.players >= table.max ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-[0_0_15px_rgba(147,51,234,0.4)]' : 'bg-cyan-600 hover:bg-cyan-500 text-white group-hover:shadow-[0_0_15px_rgba(6,182,212,0.4)]'}`}
                         >
-                          {table.players >= table.max ? "Watch" : "Join"}
+                          {table.players >= table.max ? t("Watch") : t("Join")}
                         </button>
                       </div>
                     </motion.div>
@@ -415,34 +890,54 @@ export function Lobby() {
             {activeTab === "LEADERBOARD" && (
               <div className="flex flex-col gap-3">
                  <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-xl font-black text-white">Top Players</h2>
-                    <span className="text-xs font-bold text-slate-400 bg-[#11122D] px-3 py-1 rounded-full">Season 12</span>
-                 </div>
-                 
-                 {mockLeaderboard.map((user, idx) => (
-                    <motion.div 
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: idx * 0.1 }}
-                      key={user.rank}
-                      className={`flex items-center justify-between p-4 rounded-xl border ${user.isMe ? 'bg-indigo-600/20 border-indigo-400/50 shadow-inner' : 'bg-[#11122D] border-white/5'}`}
+                    <h2 className="text-xl font-black text-white">{t("Top Players")}</h2>
+                    <button
+                      onClick={() => {
+                        void loadLeaderboard();
+                      }}
+                      className="text-xs font-bold text-cyan-400 bg-[#11122D] px-3 py-1 rounded-full hover:text-cyan-300"
                     >
-                      <div className="flex items-center gap-4">
-                         <div className={`w-8 text-center font-black text-lg ${user.rank <= 3 ? 'text-yellow-400' : 'text-slate-500'}`}>
-                           #{user.rank}
+                      {leaderboardLoading ? 'Loading...' : 'Refresh'}
+                      {leaderboardLoading ? t('Loading...') : t('Refresh')}
+                    </button>
+                 </div>
+
+                 <div className="flex flex-col gap-2">
+                   {leaderboard.length === 0 ? (
+                     <div className="bg-[#11122D] border border-white/10 rounded-2xl p-6 text-slate-300">
+                       <p className="font-bold text-white">{t("No ranking data available.")}</p>
+                     </div>
+                   ) : (
+                     leaderboard.slice(0, 20).map((entry, index) => (
+                       <div
+                         key={entry.id}
+                         className={`relative rounded-xl p-4 flex items-center justify-between ${entry.id === currentUserId ? "bg-cyan-900/35 border border-cyan-400/70" : "bg-[#11122D] border border-white/10"}`}
+                       >
+                         {entry.id === currentUserId && (
+                          <span className="absolute -top-2 right-3 text-[10px] px-2 py-0.5 rounded-full bg-cyan-400 text-slate-900 font-black">{t("YOU")}</span>
+                         )}
+                         <div className="flex items-center gap-3">
+                           <div className={`w-9 h-9 rounded-full flex items-center justify-center font-black ${
+                             index === 0
+                               ? 'bg-yellow-500 text-slate-900'
+                               : index === 1
+                                 ? 'bg-slate-300 text-slate-900'
+                                 : index === 2
+                                   ? 'bg-amber-700 text-white'
+                                   : 'bg-slate-700 text-white'
+                           }`}>
+                             {index + 1}
+                           </div>
+                           <div className="flex flex-col">
+                             <span className="font-black text-white">{entry.nickname}</span>
+                             <span className="text-xs uppercase tracking-wider text-slate-400">{entry.role}</span>
+                           </div>
                          </div>
-                         <div className="w-10 h-10 rounded-full bg-slate-700 overflow-hidden border-2 border-slate-600">
-                           <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user.name}`} alt="avatar" />
-                         </div>
-                         <div className="font-bold text-white text-lg flex items-center gap-2">
-                           {user.name} {user.isMe && <span className="bg-cyan-500 text-[10px] px-2 py-0.5 rounded-sm uppercase tracking-widest text-black">You</span>}
-                         </div>
-                      </div>
-                      <div className="font-black text-green-400 tracking-wider">
-                         {user.chips}
-                      </div>
-                    </motion.div>
-                 ))}
+                         <div className="font-black text-cyan-300">${entry.balanceAmount.toLocaleString()}</div>
+                       </div>
+                     ))
+                   )}
+                 </div>
               </div>
             )}
 
@@ -451,45 +946,34 @@ export function Lobby() {
               <div className="flex flex-col gap-4">
                  <div className="flex justify-between items-center mb-2">
                     <h2 className="text-xl font-black text-white flex items-center gap-2">
-                      <Target className="text-cyan-400" /> Daily Missions
+                      <Target className="text-cyan-400" /> {t("Daily Missions")}
                     </h2>
-                    <span className="text-sm font-bold text-slate-400">Resets in 14:22:05</span>
+                    <span className="text-sm font-bold text-slate-400">{t("Dummy Missions")}</span>
                  </div>
 
-                 {mockQuests.map((quest, idx) => (
-                    <motion.div 
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: idx * 0.1 }}
-                      key={quest.id}
-                      className="bg-[#11122D] p-5 rounded-2xl border border-white/5 relative overflow-hidden"
-                    >
-                       <div className="flex justify-between items-end mb-3">
-                         <div className="flex flex-col gap-1">
-                           <h3 className="font-bold text-lg text-white">{quest.title}</h3>
-                           <span className="text-yellow-400 font-black text-sm">Reward: {quest.reward}</span>
-                         </div>
-                         <div className="font-mono text-sm font-bold text-slate-400">
-                           {quest.progress} / {quest.max}
-                         </div>
-                       </div>
-                       <div className="w-full h-3 bg-slate-800 rounded-full overflow-hidden border border-slate-700 relative">
-                         <motion.div 
-                           initial={{ width: 0 }}
-                           animate={{ width: `${(quest.progress / quest.max) * 100}%` }}
-                           transition={{ duration: 1, delay: 0.5 }}
-                           className={`absolute inset-y-0 left-0 ${quest.progress >= quest.max ? 'bg-green-500' : 'bg-gradient-to-r from-cyan-600 to-cyan-400'}`}
-                         />
-                       </div>
-                       {quest.progress >= quest.max && (
-                         <div className="absolute inset-0 bg-green-500/20 backdrop-blur-[2px] flex items-center justify-center z-10">
-                           <button className="bg-green-500 text-white font-black px-6 py-2 rounded-full uppercase tracking-wider shadow-lg flex items-center gap-2 hover:bg-green-400 transition">
-                             <CheckCircle2 className="w-5 h-5" /> Claim Reward
-                           </button>
-                         </div>
-                       )}
-                    </motion.div>
-                 ))}
+                 <div className="bg-[#11122D] border border-white/10 rounded-2xl p-4 flex items-center justify-between">
+                   <div>
+                     <p className="font-black text-white">{t("Play 3 Hands")}</p>
+                     <p className="text-sm text-slate-400">0 / 3 {t("hands")}</p>
+                   </div>
+                   <div className="text-cyan-300 font-bold">+ 300</div>
+                 </div>
+
+                 <div className="bg-[#11122D] border border-white/10 rounded-2xl p-4 flex items-center justify-between">
+                   <div>
+                     <p className="font-black text-white">{t("Win 1 Hand")}</p>
+                     <p className="text-sm text-slate-400">0 / 1 {t("wins")}</p>
+                   </div>
+                   <div className="text-cyan-300 font-bold">+ 500</div>
+                 </div>
+
+                 <div className="bg-[#11122D] border border-white/10 rounded-2xl p-4 flex items-center justify-between">
+                   <div>
+                     <p className="font-black text-white">{t("Join Cash Table")}</p>
+                     <p className="text-sm text-slate-400">0 / 1 {t("joined")}</p>
+                   </div>
+                   <div className="text-cyan-300 font-bold">+ 200</div>
+                 </div>
               </div>
             )}
           </div>
@@ -513,7 +997,7 @@ export function Lobby() {
             >
               <div className="bg-[#1A1C3E] p-4 flex justify-between items-center border-b border-white/5">
                 <h3 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
-                  <Users className="text-yellow-400 w-6 h-6"/> Create Table
+                  <Users className="text-yellow-400 w-6 h-6"/> {t("Create Table")}
                 </h3>
                 <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-white transition">
                   <X className="w-6 h-6" />
@@ -522,30 +1006,79 @@ export function Lobby() {
               <div className="p-6">
                 <div className="flex flex-col gap-4">
                   <div>
-                    <label className="block text-sm font-bold text-slate-300 mb-1">Game Mode</label>
-                    <select className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition">
-                      <option value="ai-bot">AI Bot Training (No Money Risk)</option>
-                      <option value="cash" disabled>Cash Game (Coming Soon)</option>
+                    <label className="block text-sm font-bold text-slate-300 mb-1">{t("Game Mode")}</label>
+                    <select id="createTableMode" className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition">
+                      <option value="ai-bot">{t("AI Bot Training (No Money Risk)")}</option>
+                      <option value="cash">{t("Cash Game")}</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-slate-300 mb-1">Max Table Size</label>
+                    <label className="block text-sm font-bold text-slate-300 mb-1">{t("Max Table Size")}</label>
                     <select id="createTableMax" defaultValue="8" className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition">
-                      <option value="8">8 Players</option>
-                      <option value="6">6 Players</option>
-                      <option value="4">4 Players</option>
-                      <option value="2">2 Players (Heads Up)</option>
+                      <option value="8">{t("8 Players")}</option>
+                      <option value="6">{t("6 Players")}</option>
+                      <option value="4">{t("4 Players")}</option>
+                      <option value="2">{t("2 Players (Heads Up)")}</option>
                     </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-bold text-slate-300 mb-1">{t("Small Blind")}</label>
+                      <input
+                        id="createBlindSmall"
+                        type="number"
+                        min={1}
+                        defaultValue={50}
+                        className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-slate-300 mb-1">{t("Big Blind")}</label>
+                      <input
+                        id="createBlindBig"
+                        type="number"
+                        min={1}
+                        defaultValue={100}
+                        className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition"
+                      />
+                    </div>
                   </div>
                 </div>
                 <button 
-                  onClick={() => {
+                  onClick={async () => {
                      const maxVal = parseInt((document.getElementById("createTableMax") as HTMLSelectElement)?.value || "8");
-                     navigate("/play", { state: { table: { players: 1, max: maxVal, stakes: "0/0", isPrivate: true, name: "Custom Bot Game" } } });
+                     const modeVal = (document.getElementById("createTableMode") as HTMLSelectElement)?.value || "ai-bot";
+                     const blindSmallInput = parseInt((document.getElementById("createBlindSmall") as HTMLInputElement)?.value || "50");
+                     const blindBigInput = parseInt((document.getElementById("createBlindBig") as HTMLInputElement)?.value || "100");
+                     const roomType: LobbyRoomType = modeVal === "cash" ? "cash" : "ai_bot";
+                     const blindSmall = Number.isFinite(blindSmallInput) && blindSmallInput > 0 ? blindSmallInput : 50;
+                     const blindBig = Number.isFinite(blindBigInput) && blindBigInput >= blindSmall ? blindBigInput : Math.max(100, blindSmall * 2);
+
+                     try {
+                       const created = await apiFetch<{ id: string; type: LobbyRoomType }>("/rooms", {
+                         method: "POST",
+                         body: JSON.stringify({
+                           name: modeVal === "cash" ? "Custom Cash Game" : "Custom Bot Game",
+                           type: roomType,
+                           maxSeats: maxVal,
+                           blindSmall,
+                           blindBig,
+                         }),
+                       });
+
+                       setShowCreateModal(false);
+                       void loadTables();
+                       navigateToRoom(created.id, {
+                         mode: created.type === "ai_bot" ? "bot" : created.type,
+                         allowStartControl: true,
+                       });
+                     } catch (error) {
+                       alert(error instanceof Error ? error.message : t("Failed to create table."));
+                     }
                   }}
                   className="mt-6 w-full font-black py-4 rounded-xl text-white uppercase tracking-wider transition-all active:translate-y-1 shadow-lg bg-gradient-to-b from-yellow-400 to-orange-500 shadow-[0_4px_0_#B45309]"
                 >
-                  Create & Join
+                  {t("Create Table")}
                 </button>
               </div>
             </motion.div>
@@ -570,22 +1103,48 @@ export function Lobby() {
             >
               <div className="bg-[#1A1C3E] p-4 flex justify-between items-center border-b border-white/5">
                 <h3 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
-                  <Lock className="text-red-400 w-6 h-6"/> Private Table
+                  <Lock className="text-red-400 w-6 h-6"/> {t("Private Table")}
                 </h3>
-                <button onClick={() => setPasswordModalTable(null)} className="text-slate-400 hover:text-white transition">
+                <button onClick={() => { setPasswordModalTable(null); setJoinCode(""); }} className="text-slate-400 hover:text-white transition">
                   <X className="w-6 h-6" />
                 </button>
               </div>
               <div className="p-6">
                 <div className="flex flex-col gap-4">
-                  <p className="text-sm font-semibold text-slate-300">This table is protected. Please enter the password set by the host to join.</p>
-                  <input type="password" placeholder="Enter Password" autoFocus className="w-full bg-[#11122D] border border-white/10 rounded-lg p-4 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-500 text-center text-lg tracking-widest" />
+                  <p className="text-sm font-semibold text-slate-300">{t("This table is protected. Please enter the password set by the host to join.")}</p>
+                  <input
+                    type="text"
+                    placeholder={t("Enter Room Code")}
+                    autoFocus
+                    value={joinCode}
+                    onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
+                    className="w-full bg-[#11122D] border border-white/10 rounded-lg p-4 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-500 text-center text-lg tracking-widest"
+                  />
                 </div>
                 <button 
-                  onClick={() => navigate("/play", { state: { mode: passwordModalTable.type, spectate: passwordModalTable.players >= passwordModalTable.max } })}
+                  onClick={async () => {
+                    try {
+                      const room = await apiFetch<{ id: string; type: LobbyRoomType }>(
+                        "/rooms/join/code",
+                        {
+                          method: "POST",
+                          body: JSON.stringify({ code: joinCode.trim().toUpperCase() }),
+                        },
+                      );
+
+                      setPasswordModalTable(null);
+                      setJoinCode("");
+                      navigateToRoom(room.id, {
+                        mode: room.type === "ai_bot" ? "bot" : room.type,
+                        allowStartControl: false,
+                      });
+                    } catch (error) {
+                      alert(error instanceof Error ? error.message : t("Failed to enter table."));
+                    }
+                  }}
                   className="mt-6 w-full font-black py-4 rounded-xl text-white uppercase tracking-wider transition-all active:translate-y-1 shadow-lg bg-gradient-to-b from-cyan-500 to-blue-600 shadow-[0_4px_0_#1D4ED8]"
                 >
-                  Enter Table
+                  {t("Enter Table")}
                 </button>
               </div>
             </motion.div>
@@ -614,7 +1173,7 @@ export function Lobby() {
                     <Trophy className="text-purple-400 w-6 h-6"/>
                   </div>
                   <div>
-                    <h3 className="text-xl font-black uppercase tracking-wider text-white">Spectate Tournament</h3>
+                    <h3 className="text-xl font-black uppercase tracking-wider text-white">{t("Spectate Tournament")}</h3>
                     <p className="text-sm text-cyan-400 font-bold">{spectateTournamentModal.name}</p>
                   </div>
                 </div>
@@ -638,7 +1197,15 @@ export function Lobby() {
                       key={tbl.id}
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
-                      onClick={() => navigate("/play", { state: { mode: "tournament", spectate: true, tournamentTable: tbl.id } })}
+                      onClick={() => {
+                        if (!spectateTournamentModal?.id) return;
+                        navigateToRoom(spectateTournamentModal.id, {
+                          mode: "tournament",
+                          spectate: true,
+                          tournamentTable: tbl.id,
+                          allowStartControl: false,
+                        });
+                      }}
                       className="bg-[#11122D] border border-white/10 hover:border-purple-500/50 p-4 rounded-xl cursor-pointer group transition-all relative overflow-hidden"
                     >
                       <div className="absolute inset-0 bg-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -646,9 +1213,9 @@ export function Lobby() {
                         <div>
                           <h4 className="font-bold text-white text-lg flex items-center gap-2">
                             {tbl.name}
-                            {tbl.id === "t-1" && <span className="bg-red-500 text-[10px] px-2 py-0.5 rounded uppercase tracking-widest">Live</span>}
+                            {tbl.id === "t-1" && <span className="bg-red-500 text-[10px] px-2 py-0.5 rounded uppercase tracking-widest">{t("Live")}</span>}
                           </h4>
-                          <span className="text-xs text-slate-400 font-semibold">Avg Stack: {tbl.avgStack}</span>
+                          <span className="text-xs text-slate-400 font-semibold">{t("Avg Stack")}: {tbl.avgStack}</span>
                         </div>
                         <div className="bg-black/50 px-2 py-1 rounded text-xs font-mono font-bold text-slate-300 flex items-center gap-1 border border-white/5">
                           <Users className="w-3 h-3" />
@@ -656,7 +1223,7 @@ export function Lobby() {
                         </div>
                       </div>
                       <div className="w-full flex justify-between items-center relative z-10 mt-2 border-t border-white/5 pt-3">
-                        <span className="text-xs font-bold text-purple-400 uppercase tracking-wider group-hover:text-purple-300 transition-colors">Watch Live</span>
+                        <span className="text-xs font-bold text-purple-400 uppercase tracking-wider group-hover:text-purple-300 transition-colors">{t("Watch Live")}</span>
                         <ChevronRight className="w-4 h-4 text-purple-500 group-hover:translate-x-1 transition-transform" />
                       </div>
                     </motion.div>
@@ -685,7 +1252,7 @@ export function Lobby() {
             >
               <div className="bg-[#1A1C3E] p-4 flex justify-between items-center border-b border-white/5">
                 <h3 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
-                  <Users className="text-cyan-400 w-6 h-6"/> Player Profile
+                  <Users className="text-cyan-400 w-6 h-6"/> {t("Player Profile")}
                 </h3>
                 <button onClick={() => setShowProfileModal(false)} className="text-slate-400 hover:text-white transition">
                   <X className="w-6 h-6" />
@@ -693,105 +1260,169 @@ export function Lobby() {
               </div>
               <div className="p-4 md:p-6 flex flex-col items-center">
                  <div className="w-24 h-24 rounded-full bg-slate-800 border-4 border-cyan-500 overflow-hidden mb-4 shadow-[0_0_15px_rgba(6,182,212,0.5)]">
-                   <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${isLoggedIn ? userName : "Guest"}&top=${avatarOptions.top}&skinColor=${avatarOptions.skinColor}&hairColor=${avatarOptions.hairColor}&clothing=${avatarOptions.clothing}&mouth=${avatarOptions.mouth}&eyes=${avatarOptions.eyes}`} alt="avatar" />
+                   <img src={avatarPreviewUrl} alt="avatar" />
                  </div>
-                 <h2 className="text-2xl font-black">{isLoggedIn ? userName : "Guest_1092"}</h2>
-                 <p className="text-cyan-400 font-bold text-sm mb-6 uppercase tracking-widest">{isPro ? "PRO Member" : isLoggedIn ? "FREE User" : "Guest"}</p>
+                 <h2 className="text-2xl font-black">{isLoggedIn ? (profileMe?.nickname ?? userName) : "Guest_1092"}</h2>
+                 <p className="text-cyan-400 font-bold text-sm mb-6 uppercase tracking-widest">{isLoggedIn ? ((profileMe?.role ?? (isPro ? "pro" : "free")) === "pro" ? t("PRO Member") : t("FREE User")) : t("Guest")}</p>
+
+                 {profileError && isLoggedIn && (
+                   <div className="w-full mb-4 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-300">
+                     {profileError}
+                   </div>
+                 )}
+
+                 {profileLoading && isLoggedIn && (
+                   <div className="w-full mb-4 rounded-lg border border-white/10 bg-[#11122D] px-3 py-3 text-sm font-semibold text-slate-300">
+                     {t("Loading profile...")}
+                   </div>
+                 )}
                  
                  {isLoggedIn && (
                    <div className="flex gap-2 w-full mb-6">
-                     <button onClick={() => setProfileTab("stats")} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition ${profileTab === "stats" ? "bg-cyan-600 text-white" : "bg-[#11122D] text-slate-400 hover:text-white"}`}>Stats</button>
-                     <button onClick={() => setProfileTab("avatar")} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition ${profileTab === "avatar" ? "bg-cyan-600 text-white" : "bg-[#11122D] text-slate-400 hover:text-white"}`}>Avatar</button>
-                     <button onClick={() => setProfileTab("settings")} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition ${profileTab === "settings" ? "bg-cyan-600 text-white" : "bg-[#11122D] text-slate-400 hover:text-white"}`}>Settings</button>
+                     <button onClick={() => setProfileTab("stats")} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition ${profileTab === "stats" ? "bg-cyan-600 text-white" : "bg-[#11122D] text-slate-400 hover:text-white"}`}>{t("Stats")}</button>
+                     <button onClick={() => setProfileTab("avatar")} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition ${profileTab === "avatar" ? "bg-cyan-600 text-white" : "bg-[#11122D] text-slate-400 hover:text-white"}`}>{t("Avatar")}</button>
+                     <button onClick={() => setProfileTab("settings")} className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition ${profileTab === "settings" ? "bg-cyan-600 text-white" : "bg-[#11122D] text-slate-400 hover:text-white"}`}>{t("Settings")}</button>
                    </div>
                  )}
 
                  {(!isLoggedIn || profileTab === "stats") && (
                    <div className="w-full bg-[#11122D] rounded-xl p-4 border border-white/5 grid grid-cols-2 gap-4 text-center mb-2">
                       <div>
-                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">Win Rate</div>
-                        <div className="text-green-400 font-black text-xl">42.5%</div>
+                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">{t("Win Rate")}</div>
+                        <div className="text-green-400 font-black text-xl">{profileStats ? `${profileStats.winRate.toFixed(1)}%` : "-"}</div>
                       </div>
                       <div>
-                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">Hands Played</div>
-                        <div className="text-white font-black text-xl">1,204</div>
+                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">{t("Hands Played")}</div>
+                        <div className="text-white font-black text-xl">{profileStats ? profileStats.playedHands.toLocaleString() : "-"}</div>
                       </div>
                       <div>
-                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">Biggest Pot</div>
-                        <div className="text-yellow-400 font-black text-xl">$52K</div>
+                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">{t("Biggest Pot")}</div>
+                        <div className="text-yellow-400 font-black text-xl">{profileStats ? `$${profileStats.biggestPot.toLocaleString()}` : "-"}</div>
                       </div>
                       <div>
-                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">Quests</div>
-                        <div className="text-white font-black text-xl">15</div>
+                        <div className="text-slate-400 text-xs font-bold uppercase mb-1">{t("Wins")}</div>
+                        <div className="text-white font-black text-xl">{profileStats ? profileStats.winHands.toLocaleString() : "-"}</div>
                       </div>
                    </div>
                  )}
 
                  {isLoggedIn && profileTab === "avatar" && (
-                   <div className="w-full flex flex-col gap-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                     <div className="flex flex-col gap-1">
-                       <label className="text-[10px] font-bold text-slate-400 uppercase">Hair / Hat</label>
-                       <select value={avatarOptions.top} onChange={e => setAvatarOptions(prev => ({...prev, top: e.target.value}))} className="w-full bg-[#11122D] border border-white/10 rounded-lg p-2.5 text-sm text-white font-bold outline-none focus:border-cyan-500">
-                         <option value="shortHairShortFlat">Short Flat</option>
-                         <option value="longHairStraight">Long Straight</option>
-                         <option value="eyepatch">Eyepatch</option>
-                         <option value="hat">Hat</option>
-                         <option value="hijab">Hijab</option>
-                         <option value="turban">Turban</option>
-                         <option value="winterHat1">Winter Hat</option>
-                       </select>
-                     </div>
-                     <div className="flex flex-col gap-1">
-                       <label className="text-[10px] font-bold text-slate-400 uppercase">Skin Color</label>
-                       <select value={avatarOptions.skinColor} onChange={e => setAvatarOptions(prev => ({...prev, skinColor: e.target.value}))} className="w-full bg-[#11122D] border border-white/10 rounded-lg p-2.5 text-sm text-white font-bold outline-none focus:border-cyan-500">
-                         <option value="ffdbb4">Light</option>
-                         <option value="edb98a">Medium Light</option>
-                         <option value="d08b5b">Medium</option>
-                         <option value="ae5d29">Medium Dark</option>
-                         <option value="614335">Dark</option>
-                       </select>
-                     </div>
-                     <div className="flex flex-col gap-1">
-                       <label className="text-[10px] font-bold text-slate-400 uppercase">Hair Color</label>
-                       <select value={avatarOptions.hairColor} onChange={e => setAvatarOptions(prev => ({...prev, hairColor: e.target.value}))} className="w-full bg-[#11122D] border border-white/10 rounded-lg p-2.5 text-sm text-white font-bold outline-none focus:border-cyan-500">
-                         <option value="black">Black</option>
-                         <option value="blonde">Blonde</option>
-                         <option value="brown">Brown</option>
-                         <option value="platinum">Platinum</option>
-                         <option value="red">Red</option>
-                         <option value="pastelPink">Pink</option>
-                       </select>
-                     </div>
-                     <div className="flex flex-col gap-1">
-                       <label className="text-[10px] font-bold text-slate-400 uppercase">Clothing</label>
-                       <select value={avatarOptions.clothing} onChange={e => setAvatarOptions(prev => ({...prev, clothing: e.target.value}))} className="w-full bg-[#11122D] border border-white/10 rounded-lg p-2.5 text-sm text-white font-bold outline-none focus:border-cyan-500">
-                         <option value="blazerAndShirt">Blazer & Shirt</option>
-                         <option value="blazerAndSweater">Blazer & Sweater</option>
-                         <option value="hoodie">Hoodie</option>
-                         <option value="overall">Overall</option>
-                         <option value="shirtCrewNeck">Crew Neck Shirt</option>
-                       </select>
-                     </div>
-                     <div className="grid grid-cols-2 gap-2">
-                       <div className="flex flex-col gap-1">
-                         <label className="text-[10px] font-bold text-slate-400 uppercase">Face</label>
-                         <select value={avatarOptions.eyes} onChange={e => setAvatarOptions(prev => ({...prev, eyes: e.target.value}))} className="w-full bg-[#11122D] border border-white/10 rounded-lg p-2 text-sm text-white font-bold outline-none focus:border-cyan-500">
-                           <option value="default">Default</option>
-                           <option value="happy">Happy</option>
-                           <option value="surprised">Surprised</option>
-                         </select>
-                       </div>
-                       <div className="flex flex-col gap-1">
-                         <label className="text-[10px] font-bold text-slate-400 uppercase">Mouth</label>
-                         <select value={avatarOptions.mouth} onChange={e => setAvatarOptions(prev => ({...prev, mouth: e.target.value}))} className="w-full bg-[#11122D] border border-white/10 rounded-lg p-2 text-sm text-white font-bold outline-none focus:border-cyan-500">
-                           <option value="smile">Smile</option>
-                           <option value="sad">Sad</option>
-                           <option value="serious">Serious</option>
-                         </select>
+                   <div className="w-full flex flex-col gap-4 max-h-[360px] overflow-y-auto pr-2 custom-scrollbar">
+                     <div className="flex flex-col gap-2">
+                       <label className="text-[10px] font-bold text-slate-400 uppercase">{t("Hair / Hat")}</label>
+                       <div className="grid grid-cols-2 gap-2">
+                         {AVATAR_TOP_OPTIONS.map((option) => (
+                           <button
+                             key={option.value}
+                             type="button"
+                             onClick={() => setAvatarOptions((prev) => ({ ...prev, top: option.value }))}
+                             className={`rounded-lg border px-2 py-2 text-xs font-bold transition ${avatarOptions.top === option.value ? "border-cyan-400 bg-cyan-500/20 text-cyan-200" : "border-white/10 bg-[#11122D] text-slate-300 hover:border-cyan-500/40"}`}
+                           >
+                             {option.label}
+                           </button>
+                         ))}
                        </div>
                      </div>
-                     <button onClick={() => setProfileTab("stats")} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-lg transition shadow-md w-full mt-2">
-                       Save Avatar
+
+                     <div className="flex flex-col gap-2">
+                       <label className="text-[10px] font-bold text-slate-400 uppercase">{t("Skin Color")}</label>
+                       <div className="flex flex-wrap gap-2">
+                         {AVATAR_SKIN_COLORS.map((color) => (
+                           <button
+                             key={color}
+                             type="button"
+                             onClick={() => setAvatarOptions((prev) => ({ ...prev, skinColor: color }))}
+                             className={`h-7 w-7 rounded-full border-2 transition ${avatarOptions.skinColor === color ? "border-cyan-300 scale-110" : "border-white/25 hover:border-cyan-500/60"}`}
+                             style={{ backgroundColor: `#${color}` }}
+                             aria-label={`skin-${color}`}
+                           />
+                         ))}
+                       </div>
+                     </div>
+
+                     <div className="flex flex-col gap-2">
+                       <label className="text-[10px] font-bold text-slate-400 uppercase">{t("Hair Color")}</label>
+                       <div className="flex flex-wrap gap-2">
+                         {AVATAR_HAIR_COLORS.map((color) => (
+                           <button
+                             key={color}
+                             type="button"
+                             onClick={() => setAvatarOptions((prev) => ({ ...prev, hairColor: color }))}
+                             className={`h-7 w-7 rounded-full border-2 transition ${avatarOptions.hairColor === color ? "border-cyan-300 scale-110" : "border-white/25 hover:border-cyan-500/60"}`}
+                             style={{ backgroundColor: `#${color}` }}
+                             aria-label={`hair-${color}`}
+                           />
+                         ))}
+                       </div>
+                     </div>
+
+                     <div className="flex flex-col gap-2">
+                       <label className="text-[10px] font-bold text-slate-400 uppercase">{t("Clothing")}</label>
+                       <div className="grid grid-cols-2 gap-2">
+                         {AVATAR_OUTFIT_OPTIONS.map((option) => (
+                           <button
+                             key={option.value}
+                             type="button"
+                             onClick={() => setAvatarOptions((prev) => ({ ...prev, clothing: option.value }))}
+                             className={`rounded-lg border px-2 py-2 text-xs font-bold transition ${avatarOptions.clothing === option.value ? "border-cyan-400 bg-cyan-500/20 text-cyan-200" : "border-white/10 bg-[#11122D] text-slate-300 hover:border-cyan-500/40"}`}
+                           >
+                             {option.label}
+                           </button>
+                         ))}
+                       </div>
+                     </div>
+
+                     <div className="grid grid-cols-2 gap-3">
+                       <div className="flex flex-col gap-2">
+                         <label className="text-[10px] font-bold text-slate-400 uppercase">{t("Eyes")}</label>
+                         <div className="flex flex-col gap-2">
+                           {AVATAR_EYE_OPTIONS.map((option) => (
+                             <button
+                               key={option.value}
+                               type="button"
+                               onClick={() => setAvatarOptions((prev) => ({ ...prev, eyes: option.value }))}
+                               className={`rounded-lg border px-2 py-2 text-xs font-bold transition ${avatarOptions.eyes === option.value ? "border-cyan-400 bg-cyan-500/20 text-cyan-200" : "border-white/10 bg-[#11122D] text-slate-300 hover:border-cyan-500/40"}`}
+                             >
+                               {option.label}
+                             </button>
+                           ))}
+                         </div>
+                       </div>
+                       <div className="flex flex-col gap-2">
+                         <label className="text-[10px] font-bold text-slate-400 uppercase">{t("Mouth")}</label>
+                         <div className="flex flex-col gap-2">
+                           {AVATAR_MOUTH_OPTIONS.map((option) => (
+                             <button
+                               key={option.value}
+                               type="button"
+                               onClick={() => setAvatarOptions((prev) => ({ ...prev, mouth: option.value }))}
+                               className={`rounded-lg border px-2 py-2 text-xs font-bold transition ${avatarOptions.mouth === option.value ? "border-cyan-400 bg-cyan-500/20 text-cyan-200" : "border-white/10 bg-[#11122D] text-slate-300 hover:border-cyan-500/40"}`}
+                             >
+                               {option.label}
+                             </button>
+                           ))}
+                         </div>
+                       </div>
+                     </div>
+
+                     <div className="flex flex-col gap-2">
+                       <label className="text-[10px] font-bold text-slate-400 uppercase">{t("Eyebrows")}</label>
+                       <div className="grid grid-cols-2 gap-2">
+                         {AVATAR_FACE_OPTIONS.map((option) => (
+                           <button
+                             key={option.value}
+                             type="button"
+                             onClick={() => setAvatarOptions((prev) => ({ ...prev, face: option.value }))}
+                             className={`rounded-lg border px-2 py-2 text-xs font-bold transition ${avatarOptions.face === option.value ? "border-cyan-400 bg-cyan-500/20 text-cyan-200" : "border-white/10 bg-[#11122D] text-slate-300 hover:border-cyan-500/40"}`}
+                           >
+                             {option.label}
+                           </button>
+                         ))}
+                       </div>
+                     </div>
+
+                     <button onClick={() => { void saveAvatar(); }} disabled={profileBusy} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-lg transition shadow-md w-full mt-1 disabled:opacity-50">
+                       {t("Save Avatar")}
                      </button>
                    </div>
                  )}
@@ -799,11 +1430,30 @@ export function Lobby() {
                  {isLoggedIn && profileTab === "settings" && (
                    <div className="w-full flex flex-col gap-4">
                      <div className="flex flex-col gap-2">
-                       <label className="text-xs font-bold text-slate-400 uppercase">Change Password</label>
-                       <input type="password" placeholder="New Password" className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-600" />
-                       <input type="password" placeholder="Confirm Password" className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-600" />
-                       <button onClick={() => setProfileTab("stats")} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-lg transition shadow-md w-full mt-2">
-                         Update Password
+                       <label className="text-xs font-bold text-slate-400 uppercase">{t("Change Password")}</label>
+                       <input
+                         type="password"
+                         placeholder={t("Current Password")}
+                         value={passwordForm.currentPassword}
+                         onChange={(event) => setPasswordForm((prev) => ({ ...prev, currentPassword: event.target.value }))}
+                         className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-600"
+                       />
+                       <input
+                         type="password"
+                         placeholder={t("New Password")}
+                         value={passwordForm.newPassword}
+                         onChange={(event) => setPasswordForm((prev) => ({ ...prev, newPassword: event.target.value }))}
+                         className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-600"
+                       />
+                       <input
+                         type="password"
+                         placeholder={t("Confirm New Password")}
+                         value={passwordForm.confirmPassword}
+                         onChange={(event) => setPasswordForm((prev) => ({ ...prev, confirmPassword: event.target.value }))}
+                         className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-600"
+                       />
+                       <button onClick={() => { void updatePassword(); }} disabled={profileBusy} className="bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-lg transition shadow-md w-full mt-2 disabled:opacity-50">
+                         {t("Update Password")}
                        </button>
                      </div>
                    </div>
@@ -831,7 +1481,7 @@ export function Lobby() {
             >
               <div className="bg-[#1A1C3E] p-4 flex justify-between items-center border-b border-white/5">
                 <h3 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
-                  <Settings className="text-slate-300 w-6 h-6"/> Settings
+                  <Settings className="text-slate-300 w-6 h-6"/> {t("Settings")}
                 </h3>
                 <button onClick={() => setShowSettingsModal(false)} className="text-slate-400 hover:text-white transition">
                   <X className="w-6 h-6" />
@@ -842,9 +1492,14 @@ export function Lobby() {
                  {/* Language */}
                  <div>
                    <h4 className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-3 uppercase tracking-wider">
-                     <Globe className="w-4 h-4"/> Language
+                     <Globe className="w-4 h-4"/> {t("Language")}
                    </h4>
-                   <select className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition">
+                   <select
+                     value={settingsLanguage}
+                     onChange={(event) => setSettingsLanguage(event.target.value as PreferredLanguage)}
+                     disabled={!isLoggedIn || settingsBusy}
+                     className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition disabled:opacity-60"
+                   >
                       <option value="en">English</option>
                       <option value="ko">한국어 (Korean)</option>
                       <option value="ja">日本語 (Japanese)</option>
@@ -854,27 +1509,93 @@ export function Lobby() {
                  {/* Volume */}
                  <div>
                    <h4 className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-3 uppercase tracking-wider">
-                     <Volume2 className="w-4 h-4"/> Audio Settings
+                     <Volume2 className="w-4 h-4"/> {t("Audio Settings")}
                    </h4>
                    <div className="flex flex-col gap-4 bg-[#11122D] p-4 rounded-xl border border-white/5">
                      <div className="flex items-center gap-4">
-                       <span className="text-xs font-bold text-slate-400 w-16">Master</span>
+                       <span className="text-xs font-bold text-slate-400 w-16">{t("Master")}</span>
                        <input type="range" min="0" max="100" defaultValue="80" className="flex-1 accent-cyan-500" />
                      </div>
                      <div className="flex items-center gap-4">
-                       <span className="text-xs font-bold text-slate-400 w-16">Music</span>
+                       <span className="text-xs font-bold text-slate-400 w-16">{t("Music")}</span>
                        <input type="range" min="0" max="100" defaultValue="40" className="flex-1 accent-cyan-500" />
                      </div>
                      <div className="flex items-center gap-4">
-                       <span className="text-xs font-bold text-slate-400 w-16">SFX</span>
+                       <span className="text-xs font-bold text-slate-400 w-16">{t("SFX")}</span>
                        <input type="range" min="0" max="100" defaultValue="100" className="flex-1 accent-cyan-500" />
                      </div>
                    </div>
                  </div>
 
-                 <button onClick={() => setShowSettingsModal(false)} className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-black py-3 rounded-xl mt-2">
-                   Save Changes
+                 <button
+                   onClick={() => {
+                     void saveSettings();
+                   }}
+                   disabled={settingsBusy}
+                   className="w-full bg-cyan-600 hover:bg-cyan-500 disabled:opacity-60 text-white font-black py-3 rounded-xl mt-2"
+                 >
+                   {settingsBusy ? t("Saving...") : t("Save Changes")}
                  </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* HELP & SUPPORT MODAL */}
+      <AnimatePresence>
+        {showHelpSupportModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-[#242754] w-full max-w-sm rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
+            >
+              <div className="bg-[#1A1C3E] p-4 flex justify-between items-center border-b border-white/5">
+                <h3 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
+                  <Info className="text-cyan-400 w-6 h-6"/> {t("Help & Support")}
+                </h3>
+                <button onClick={() => setShowHelpSupportModal(false)} className="text-slate-400 hover:text-white transition">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              <div className="p-6 flex flex-col gap-4">
+                <div className="bg-[#11122D] border border-white/10 rounded-xl p-4">
+                  <h4 className="text-sm font-bold text-cyan-300 uppercase tracking-wider mb-2">{t("Basic Guide")}</h4>
+                  <ul className="text-sm text-slate-300 space-y-2 font-semibold">
+                    <li>1. {t("Use Quick Play for instant matchmaking.")}</li>
+                    <li>2. {t("Use Hand Review to analyze recent hands.")}</li>
+                    <li>3. {t("Use Store to purchase chips or PRO.")}</li>
+                  </ul>
+                </div>
+
+                <div className="bg-[#11122D] border border-white/10 rounded-xl p-4">
+                  <h4 className="text-sm font-bold text-cyan-300 uppercase tracking-wider mb-2">{t("Developer Info")}</h4>
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="h-12 w-12 rounded-lg overflow-hidden border border-white/10 bg-white/5">
+                      <img
+                        src="/main2.png"
+                        alt="Dvely logo"
+                        className="h-full w-full object-cover object-center"
+                      />
+                    </div>
+                    <p className="text-sm text-slate-300 font-semibold">{t("Team")}: Dvely</p>
+                  </div>
+                  <a
+                    href="https://github.com/Dvely"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm text-cyan-300 hover:text-cyan-200 underline break-all font-bold"
+                  >
+                    {t("GitHub Profile")}: github.com/Dvely
+                  </a>
+                </div>
               </div>
             </motion.div>
           </motion.div>
@@ -906,16 +1627,16 @@ export function Lobby() {
 
                <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2">
                  <button onClick={() => { setShowProfileModal(true); setShowMenu(false); }} className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left">
-                   <Users className="w-5 h-5" /> Profile
+                   <Users className="w-5 h-5" /> {t("Profile")}
                  </button>
                  <button onClick={() => { navigate("/store"); setShowMenu(false); }} className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left">
-                   <ShoppingBag className="w-5 h-5 text-yellow-400" /> Store
+                   <ShoppingBag className="w-5 h-5 text-yellow-400" /> {t("Store")}
                  </button>
                  <button onClick={() => { setShowSettingsModal(true); setShowMenu(false); }} className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left">
-                   <Settings className="w-5 h-5" /> Settings
+                   <Settings className="w-5 h-5" /> {t("Settings")}
                  </button>
-                 <button className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left opacity-50 cursor-not-allowed">
-                   <Info className="w-5 h-5" /> Help & Support
+                 <button onClick={() => { setShowHelpSupportModal(true); setShowMenu(false); }} className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left">
+                   <Info className="w-5 h-5" /> {t("Help & Support")}
                  </button>
                </div>
 
@@ -927,7 +1648,7 @@ export function Lobby() {
                    }}
                    className="flex items-center gap-3 w-full p-3 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 font-bold transition text-left"
                  >
-                   <LogOut className="w-5 h-5" /> {isLoggedIn ? "Log Out" : "Exit to Login"}
+                   <LogOut className="w-5 h-5" /> {isLoggedIn ? t("Log Out") : t("Exit to Login")}
                  </button>
                </div>
             </motion.div>

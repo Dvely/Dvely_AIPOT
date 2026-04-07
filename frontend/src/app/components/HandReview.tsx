@@ -2,13 +2,20 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  ArrowLeft, History, PlayCircle, ChevronRight, CheckCircle2, XCircle, BrainCircuit, Target, ShieldAlert, PauseCircle, ChevronLeft, FastForward
+  ArrowLeft, History, PlayCircle, ChevronRight, CheckCircle2, XCircle, BrainCircuit, Target, ShieldAlert, PauseCircle, ChevronLeft, Star
 } from "lucide-react";
+import { apiFetch } from "../api";
+import { getCurrentAuth, getCurrentPreferredLanguage, getCurrentUserId } from "../auth";
+import { useI18n } from "../i18n";
 
 // --- MOCK DATA ---
 interface ActionStep {
   id: number;
+  order: number | null;
+  seatId: number | null;
+  playerId: string;
   player: string;
+  isHeroAction: boolean;
   street: "Preflop" | "Flop" | "Turn" | "River" | "Showdown";
   desc: string;
   pot: number;
@@ -27,118 +34,238 @@ interface HandHistory {
   title: string;
   stakes: string;
   net: number;
+  favorite: boolean;
   steps: ActionStep[];
 }
 
-const mockHands: HandHistory[] = [
-  {
-    id: "h1",
-    date: "2 mins ago",
-    title: "AA vs KK All-in Preflop",
-    stakes: "$500/$1000",
-    net: 21250,
-    steps: [
-      {
-        id: 1, player: "Villain", street: "Preflop", desc: "Raises to $2,500", pot: 4000, board: [], heroCards: ["A♠", "A♥"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Villain opens from early position. Their range is likely tight (top 15% of hands).", evScore: 0, heroEquity: 82, heatMapType: "tight"
-      },
-      {
-        id: 2, player: "Hero", street: "Preflop", desc: "3-Bets to $7,500", pot: 11500, board: [], heroCards: ["A♠", "A♥"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Excellent 3-bet. With AA, you must build the pot immediately and deny equity to speculative hands.", evScore: +1.5, heroEquity: 82, heatMapType: "premium"
-      },
-      {
-        id: 3, player: "Villain", street: "Preflop", desc: "4-Bets All-in $21,250", pot: 28750, board: [], heroCards: ["A♠", "A♥"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Villain jams. Their range narrows to QQ+, AKs. You are crushing this range.", evScore: 0, heroEquity: 82, heatMapType: "premium"
-      },
-      {
-        id: 4, player: "Hero", street: "Preflop", desc: "Calls $13,750", pot: 42500, board: [], heroCards: ["A♠", "A♥"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Snap call. Folding here would be a catastrophic mistake.", evScore: +4.2, heroEquity: 82, heatMapType: "premium"
-      },
-      {
-        id: 5, player: "System", street: "Showdown", desc: "Hero wins $42,500", pot: 42500, board: ["7♦", "2♠", "Q♥", "5♣", "9♠"], heroCards: ["A♠", "A♥"], opponents: [{ name: "Villain", cards: ["K♣", "K♦"] }],
-        analysis: "Board runs out clean. AA holds against KK. Perfect execution.", evScore: 0, heroEquity: 100, heatMapType: "showdown"
-      }
-    ]
-  },
-  {
-    id: "h2",
-    date: "15 mins ago",
-    title: "Tough Fold on the Turn",
-    stakes: "$100/$200",
-    net: -600,
-    steps: [
-      {
-        id: 1, player: "Hero", street: "Preflop", desc: "Raises to $600", pot: 900, board: [], heroCards: ["7♠", "8♠"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Standard open with a suited connector from late position to steal blinds or play a multi-way pot.", evScore: +0.2, heroEquity: 42, heatMapType: "broadway"
-      },
-      {
-        id: 2, player: "Villain", street: "Preflop", desc: "Calls $600", pot: 1500, board: [], heroCards: ["7♠", "8♠"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Villain defends BB. Their range is wide but capped (likely no AA, KK, AK).", evScore: 0, heroEquity: 45, heatMapType: "broadway"
-      },
-      {
-        id: 3, player: "Hero", street: "Flop", desc: "C-Bets $800", pot: 2300, board: ["9♠", "10♠", "2♣"], heroCards: ["7♠", "8♠"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Great c-bet. You flopped a massive open-ended straight flush draw. You want to build the pot.", evScore: +1.8, heroEquity: 56, heatMapType: "draws"
-      },
-      {
-        id: 4, player: "Villain", street: "Flop", desc: "Calls $800", pot: 3100, board: ["9♠", "10♠", "2♣"], heroCards: ["7♠", "8♠"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Villain calls. They likely have a piece (Tx, 9x) or a worse draw.", evScore: 0, heroEquity: 54, heatMapType: "broadway"
-      },
-      {
-        id: 5, player: "Hero", street: "Turn", desc: "Checks", pot: 3100, board: ["9♠", "10♠", "2♣", "A♥"], heroCards: ["7♠", "8♠"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Checking the Ace is prudent. It hits Villain's calling range hard (A9, AT, AQ).", evScore: +0.5, heroEquity: 28, heatMapType: "tight"
-      },
-      {
-        id: 6, player: "Villain", street: "Turn", desc: "Bets $3,400", pot: 6500, board: ["9♠", "10♠", "2♣", "A♥"], heroCards: ["7♠", "8♠"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Villain overbets the pot. This strongly polarizes their range to two-pair+ or pure bluffs.", evScore: 0, heroEquity: 28, heatMapType: "bluff"
-      },
-      {
-        id: 7, player: "Hero", street: "Turn", desc: "Folds", pot: 6500, board: ["9♠", "10♠", "2♣", "A♥"], heroCards: ["7♠", "8♠"], opponents: [{ name: "Villain", cards: [] }],
-        analysis: "Excellent discipline. You don't have the direct pot odds to call for your draw against this sizing.", evScore: +1.5, heroEquity: 0, heatMapType: "draws"
-      }
-    ]
-  },
-  {
-    id: "h3",
-    date: "Just now",
-    title: "3-Way All-in on the Flop",
-    stakes: "$200/$400",
-    net: 48000,
-    steps: [
-      {
-        id: 1, player: "UTG", street: "Preflop", desc: "Raises to $1,200", pot: 1800, board: [], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: [] }, { name: "BTN", cards: [] }],
-        analysis: "UTG opens strong. BTN and you (BB) call. Multi-way dynamics require careful play of drawing hands.", evScore: 0, heroEquity: 22, heatMapType: "tight"
-      },
-      {
-        id: 2, player: "BTN", street: "Preflop", desc: "Calls $1,200", pot: 3000, board: [], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: [] }, { name: "BTN", cards: [] }],
-        analysis: "BTN flat calls, capping their range. They likely have mid-pairs or broadways.", evScore: 0, heroEquity: 25, heatMapType: "broadway"
-      },
-      {
-        id: 3, player: "Hero", street: "Preflop", desc: "Calls $800", pot: 3800, board: [], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: [] }, { name: "BTN", cards: [] }],
-        analysis: "Closing the action with suited connectors. Excellent pot odds to see a flop 3-way.", evScore: +0.5, heroEquity: 25, heatMapType: "draws"
-      },
-      {
-        id: 4, player: "Hero", street: "Flop", desc: "Checks", pot: 3800, board: ["7♠", "6♠", "2♦"], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: [] }, { name: "BTN", cards: [] }],
-        analysis: "Monster flop! Open-ended straight flush draw. Checking to the preflop aggressor.", evScore: +1.2, heroEquity: 54, heatMapType: "draws"
-      },
-      {
-        id: 5, player: "UTG", street: "Flop", desc: "Bets $2,500", pot: 6300, board: ["7♠", "6♠", "2♦"], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: [] }, { name: "BTN", cards: [] }],
-        analysis: "UTG continues. They likely have an overpair (AA, KK) given the dry board.", evScore: 0, heroEquity: 54, heatMapType: "premium"
-      },
-      {
-        id: 6, player: "BTN", street: "Flop", desc: "Raises to $8,000", pot: 14300, board: ["7♠", "6♠", "2♦"], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: [] }, { name: "BTN", cards: [] }],
-        analysis: "BTN raises! This shows immense strength, likely a set (77, 66) or two pair.", evScore: 0, heroEquity: 42, heatMapType: "tight"
-      },
-      {
-        id: 7, player: "Hero", street: "Flop", desc: "All-in $22,100", pot: 36400, board: ["7♠", "6♠", "2♦"], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: [] }, { name: "BTN", cards: [] }],
-        analysis: "Hero jams! With 15 outs twice, you are actually the mathematical favorite or flipping against sets.", evScore: +2.8, heroEquity: 42, heatMapType: "draws"
-      },
-      {
-        id: 8, player: "System", street: "Showdown", desc: "Hero hits Flush and wins $80,600", pot: 80600, board: ["7♠", "6♠", "2♦", "K♣", "3♠"], heroCards: ["9♠", "8♠"], opponents: [{ name: "UTG", cards: ["A♦", "A♥"] }, { name: "BTN", cards: ["7♣", "7♥"] }],
-        analysis: "River brings the spade! Your draw comes in against Aces and top set. Great push on the flop.", evScore: 0, heroEquity: 100, heatMapType: "showdown"
-      }
-    ]
+interface HandActionAnalysisRecord {
+  id: string;
+  handId: string;
+  actionOrder: number;
+  seatId: number;
+  playerId: string;
+  street: string;
+  provider: "local" | "openai" | "claude" | "gemini";
+  model: string;
+  analysis: string;
+  createdByUserId: string;
+  createdAt: string;
+}
+
+interface HandAnalyzeResponse {
+  handId: string;
+  provider: "local" | "openai" | "claude" | "gemini";
+  model: string;
+  summary: string;
+  actions: Array<{
+    order: number;
+    analysis: string;
+    createdAt: string;
+  }>;
+}
+
+interface HandReviewAction {
+  handId: string;
+  order: number;
+  seatId: number;
+  playerId: string;
+  action: string;
+  amount: number;
+  potAfter: number;
+  street: string;
+  createdAt: string;
+}
+
+interface HandReviewRecord {
+  handId: string;
+  roomId: string;
+  participantIds: string[];
+  participants?: {
+    seatId: number;
+    playerId: string;
+    roleType: "human" | "bot";
+    userId?: string;
+    displayName: string;
+    holeCards: string[];
+  }[];
+  positions?: Record<string, string>;
+  blindSmall?: number;
+  blindBig?: number;
+  boardCards: string[];
+  actions: HandReviewAction[];
+  winnerPlayerId: string;
+  resultPot: number;
+  analyses?: HandActionAnalysisRecord[];
+  favoriteUserIds?: string[];
+  createdAt: string;
+}
+
+const SUIT_MAP: Record<string, string> = {
+  S: "\u2660",
+  H: "\u2665",
+  D: "\u2666",
+  C: "\u2663",
+};
+
+function toUiCard(card: string) {
+  if (card.length < 2) return card;
+  const rank = card.slice(0, -1);
+  const suit = card.slice(-1).toUpperCase();
+  return `${rank}${SUIT_MAP[suit] ?? suit}`;
+}
+
+function toReviewStreet(street: string): ActionStep["street"] {
+  if (street === "FLOP") return "Flop";
+  if (street === "TURN") return "Turn";
+  if (street === "RIVER") return "River";
+  if (street === "SHOWDOWN" || street === "RESULT") return "Showdown";
+  return "Preflop";
+}
+
+function toBoardByStreet(board: string[], street: string) {
+  const cards = board.map(toUiCard);
+  if (street === "FLOP") return cards.slice(0, 3);
+  if (street === "TURN") return cards.slice(0, 4);
+  if (street === "RIVER" || street === "SHOWDOWN" || street === "RESULT") return cards;
+  return [];
+}
+
+function toRelativeDate(value: string) {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return value;
+  const diffMinutes = Math.max(1, Math.floor((Date.now() - timestamp) / 60000));
+  if (diffMinutes < 60) return `${diffMinutes} mins ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours} hours ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays} days ago`;
+}
+
+function toHeatMapType(action: string): ActionStep["heatMapType"] {
+  if (action === "all-in") return "premium";
+  if (action === "raise" || action === "bet") return "broadway";
+  if (action === "call") return "draws";
+  if (action === "fold") return "bluff";
+  return "tight";
+}
+
+function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): HandHistory {
+  const participants = record.participants ?? [];
+  const analyses = record.analyses ?? [];
+  const heroParticipant = viewerUserId
+    ? participants.find((participant) => participant.userId === viewerUserId) ?? null
+    : null;
+  const latestAnalysisByOrder = new Map<number, HandActionAnalysisRecord>();
+  for (const item of analyses) {
+    const prev = latestAnalysisByOrder.get(item.actionOrder);
+    if (!prev || new Date(item.createdAt).getTime() >= new Date(prev.createdAt).getTime()) {
+      latestAnalysisByOrder.set(item.actionOrder, item);
+    }
   }
-];
+
+  const participantBySeat = new Map<number, NonNullable<HandReviewRecord["participants"]>[number]>();
+  for (const participant of participants) {
+    participantBySeat.set(participant.seatId, participant);
+  }
+
+  const opponents = participants
+    .filter((participant) => !heroParticipant || participant.playerId !== heroParticipant.playerId)
+    .map((participant) => ({
+      name: participant.displayName,
+      cards: participant.holeCards.map(toUiCard),
+    }));
+
+  const fallbackOpponents = record.participantIds.map((id, idx) => ({
+    name: `P${idx + 1}`,
+    cards: [] as string[],
+  }));
+
+  const resolvedOpponents = opponents.length > 0 ? opponents : fallbackOpponents;
+  const heroCards = heroParticipant?.holeCards?.map(toUiCard) ?? [];
+  const heroContribution = heroParticipant
+    ? record.actions
+        .filter((action) => action.playerId === heroParticipant.playerId)
+        .reduce((sum, action) => sum + Math.max(action.amount, 0), 0)
+    : 0;
+  const heroPosition = heroParticipant
+    ? record.positions?.[String(heroParticipant.seatId)]
+    : undefined;
+  const heroBlindContribution = heroParticipant
+    ? (heroPosition === "SB" || heroPosition === "BTN/SB" ? (record.blindSmall ?? 0) : 0) +
+      (heroPosition === "BB" ? (record.blindBig ?? 0) : 0)
+    : 0;
+  const heroWon = Boolean(heroParticipant && record.winnerPlayerId === heroParticipant.playerId);
+  const handNet = heroParticipant
+    ? (heroWon
+      ? record.resultPot - (heroContribution + heroBlindContribution)
+      : -(heroContribution + heroBlindContribution))
+    : record.resultPot;
+  const winnerLabel =
+    participants.find((participant) => participant.playerId === record.winnerPlayerId)
+      ?.displayName ?? record.winnerPlayerId.slice(0, 8);
+
+  const steps: ActionStep[] = record.actions
+    .sort((a, b) => a.order - b.order)
+    .map((action) => {
+      const street = toReviewStreet(action.street);
+      const actionName = action.action.toUpperCase();
+      const amountText = action.amount > 0 ? ` $${action.amount.toLocaleString()}` : "";
+      const actionOwner = participantBySeat.get(action.seatId);
+      const latestAnalysis = latestAnalysisByOrder.get(action.order);
+      const displayName = actionOwner?.displayName ?? `Seat ${action.seatId}`;
+      const isHeroAction = Boolean(heroParticipant && action.playerId === heroParticipant.playerId);
+
+      return {
+        id: action.order,
+        order: action.order,
+        seatId: action.seatId,
+        playerId: action.playerId,
+        player: displayName,
+        isHeroAction,
+        street,
+        desc: `${actionName}${amountText}`,
+        pot: action.potAfter,
+        board: toBoardByStreet(record.boardCards, action.street),
+        heroCards,
+        opponents: resolvedOpponents,
+        analysis:
+          latestAnalysis?.analysis ??
+          `Live action replay from room ${record.roomId.slice(0, 8)}.`,
+        evScore: 0,
+        heroEquity: 50,
+        heatMapType: toHeatMapType(action.action),
+      };
+    });
+
+  steps.push({
+    id: steps.length + 1,
+    order: null,
+    seatId: null,
+    playerId: "system",
+    player: "System",
+    isHeroAction: false,
+    street: "Showdown",
+    desc: `Winner ${winnerLabel} wins $${record.resultPot.toLocaleString()}`,
+    pot: record.resultPot,
+    board: record.boardCards.map(toUiCard),
+    heroCards,
+    opponents: resolvedOpponents,
+    analysis: "Showdown completed from real game data.",
+    evScore: 0,
+    heroEquity: 100,
+    heatMapType: "showdown",
+  });
+
+  return {
+    id: record.handId,
+    date: toRelativeDate(record.createdAt),
+    title: `Hand #${record.handId.slice(0, 8)}`,
+    stakes: "LIVE",
+    net: handNet,
+    favorite: Boolean(viewerUserId && (record.favoriteUserIds ?? []).includes(viewerUserId)),
+    steps,
+  };
+}
 
 // --- 13x13 Range Grid Helper ---
 const RANKS = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
@@ -188,12 +315,230 @@ function getHeatMapColor(rIdx: number, cIdx: number, type: ActionStep['heatMapTy
   return "bg-slate-800 text-slate-600";
 }
 
+type AnalysisProvider = "local" | "openai" | "claude" | "gemini";
+
+const ANALYSIS_MODELS: Record<AnalysisProvider, Array<{ label: string; value: string }>> = {
+  local: [
+    { label: "Qwen 2.5 Coder", value: "qwen2.5-coder:3b" },
+    { label: "EXAONE Deep", value: "exaone-deep:2.4b" },
+  ],
+  openai: [
+    { label: "GPT-4.1 mini", value: "gpt-4.1-mini" },
+    { label: "GPT-4.1", value: "gpt-4.1" },
+  ],
+  claude: [
+    { label: "Claude 3.5 Sonnet", value: "claude-3-5-sonnet-latest" },
+  ],
+  gemini: [
+    { label: "Gemini 1.5 Pro", value: "gemini-1.5-pro" },
+  ],
+};
+
 export function HandReview() {
   const navigate = useNavigate();
+  const { t } = useI18n();
+  const { isLoggedIn, isPro } = getCurrentAuth();
+  const preferredLanguage = getCurrentPreferredLanguage();
+  const viewerUserId = getCurrentUserId();
+  const [hands, setHands] = useState<HandHistory[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const [selectedHand, setSelectedHand] = useState<HandHistory | null>(null);
   const [stepIdx, setStepIdx] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<"all" | "favorites">("all");
+  const [analysisProvider, setAnalysisProvider] = useState<AnalysisProvider>("local");
+  const [analysisModel, setAnalysisModel] = useState(ANALYSIS_MODELS.local[0].value);
+  const [handAnalyzeBusy, setHandAnalyzeBusy] = useState(false);
+  const [analysisSummary, setAnalysisSummary] = useState("");
+  const [analysisError, setAnalysisError] = useState("");
+  const [stepAnalysisMap, setStepAnalysisMap] = useState<Record<number, string>>({});
   const logRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isPro) {
+      setHands([]);
+      setLoading(false);
+      setErrorMessage("");
+      return;
+    }
+
+    const loadHands = async () => {
+      setLoading(true);
+      try {
+        const list = await apiFetch<HandReviewRecord[]>("/hand-review/hands");
+        const mapped = list
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+          .map((record) => toHandHistory(record, viewerUserId));
+        setHands(mapped);
+        setErrorMessage("");
+      } catch (error) {
+        setHands([]);
+        setErrorMessage(error instanceof Error ? error.message : t("Failed to load hand history."));
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void loadHands();
+  }, [isPro, viewerUserId]);
+
+  useEffect(() => {
+    const available = ANALYSIS_MODELS[analysisProvider];
+    if (available.some((item) => item.value === analysisModel)) return;
+    setAnalysisModel(available[0]?.value ?? "");
+  }, [analysisProvider, analysisModel]);
+
+  useEffect(() => {
+    if (!selectedHand) {
+      setStepAnalysisMap({});
+      return;
+    }
+
+    const map: Record<number, string> = {};
+    for (const step of selectedHand.steps) {
+      if (step.order === null) continue;
+      map[step.order] = step.analysis;
+    }
+    setStepAnalysisMap(map);
+  }, [selectedHand?.id]);
+
+  const toggleFavorite = async (handId: string, nextFavorite: boolean) => {
+    try {
+      await apiFetch<{ handId: string; favorite: boolean }>(`/hand-review/hands/${handId}/favorite`, {
+        method: "POST",
+        body: JSON.stringify({ favorite: nextFavorite }),
+      });
+
+      setHands((prev) =>
+        prev.map((hand) =>
+          hand.id === handId
+            ? {
+                ...hand,
+                favorite: nextFavorite,
+              }
+            : hand,
+        ),
+      );
+      setSelectedHand((prev) =>
+        prev && prev.id === handId
+          ? {
+              ...prev,
+              favorite: nextFavorite,
+            }
+          : prev,
+      );
+    } catch (error) {
+      alert(error instanceof Error ? error.message : t("Failed to save favorites."));
+    }
+  };
+
+  const analyzeWholeHand = async () => {
+    if (!selectedHand || handAnalyzeBusy) return;
+
+    setHandAnalyzeBusy(true);
+    setAnalysisSummary("");
+    setAnalysisError("");
+    try {
+      const response = await apiFetch<HandAnalyzeResponse>(
+        `/hand-review/hands/${selectedHand.id}/analyze`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            provider: analysisProvider,
+            model: analysisModel,
+            includePremiumAnalysis: true,
+            language: preferredLanguage,
+          }),
+        },
+      );
+
+      const nextMap = response.actions.reduce<Record<number, string>>((acc, item) => {
+        acc[item.order] = item.analysis;
+        return acc;
+      }, {});
+      setStepAnalysisMap((prev) => ({ ...prev, ...nextMap }));
+
+      setSelectedHand((prev) => {
+        if (!prev || prev.id !== response.handId) return prev;
+        return {
+          ...prev,
+          steps: prev.steps.map((step) =>
+            step.order !== null && nextMap[step.order]
+              ? {
+                  ...step,
+                  analysis: nextMap[step.order],
+                }
+              : step,
+          ),
+        };
+      });
+
+      setHands((prev) =>
+        prev.map((hand) =>
+          hand.id !== response.handId
+            ? hand
+            : {
+                ...hand,
+                steps: hand.steps.map((step) =>
+                  step.order !== null && nextMap[step.order]
+                    ? {
+                        ...step,
+                        analysis: nextMap[step.order],
+                      }
+                    : step,
+                ),
+              },
+        ),
+      );
+
+      setAnalysisSummary(response.summary?.trim() ?? "");
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : t("Failed to analyze hand."));
+    } finally {
+      setHandAnalyzeBusy(false);
+    }
+  };
+
+  if (!isPro) {
+    return (
+      <div className="flex flex-col w-full h-full bg-[#11122D] font-sans text-white relative overflow-hidden">
+        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10 pointer-events-none" />
+        <header className="relative z-10 flex items-center p-4 md:p-6 border-b border-white/5 bg-[#1A1C3E]">
+          <button
+            onClick={() => navigate("/lobby")}
+            className="flex items-center gap-2 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 px-4 py-2 rounded-full font-bold transition"
+          >
+            <ArrowLeft className="w-5 h-5" /> {t("Back to Lobby")}
+          </button>
+        </header>
+        <div className="flex-1 flex items-center justify-center p-6 z-10">
+          <div className="max-w-xl w-full rounded-2xl border border-orange-500/40 bg-orange-500/10 p-6 text-center">
+            <h2 className="text-2xl font-black text-white mb-2">{t("Hand Review is PRO Only")}</h2>
+            <p className="text-slate-300 font-semibold mb-6">
+              {isLoggedIn
+                ? t("Hand replay and analysis are available for PRO members only.")
+                : t("Sign in and subscribe to PRO to use Hand Review.")}
+            </p>
+            <div className="flex justify-center gap-3">
+              <button
+                onClick={() => navigate("/store")}
+                className="bg-orange-500 hover:bg-orange-400 text-white font-black px-5 py-2.5 rounded-xl"
+              >
+                {t("Go to Store")}
+              </button>
+              <button
+                onClick={() => navigate("/lobby")}
+                className="bg-slate-700 hover:bg-slate-600 text-white font-black px-5 py-2.5 rounded-xl"
+              >
+                {t("Back")}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Auto-play logic
   useEffect(() => {
@@ -220,6 +565,10 @@ export function HandReview() {
 
   // --- List View ---
   if (!selectedHand) {
+    const visibleHands = historyFilter === "favorites"
+      ? hands.filter((hand) => hand.favorite)
+      : hands;
+
     return (
       <div className="flex flex-col w-full h-full bg-[#11122D] font-sans text-white relative overflow-hidden">
         <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10 pointer-events-none" />
@@ -229,27 +578,66 @@ export function HandReview() {
             onClick={() => navigate("/lobby")}
             className="flex items-center gap-2 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 px-4 py-2 rounded-full font-bold transition"
           >
-            <ArrowLeft className="w-5 h-5" /> Back to Lobby
+            <ArrowLeft className="w-5 h-5" /> {t("Back to Lobby")}
           </button>
           <div className="mx-auto flex items-center gap-3">
             <History className="w-6 h-6 text-orange-400" />
-            <h1 className="text-2xl font-black tracking-wider uppercase">Hand History</h1>
+            <h1 className="text-2xl font-black tracking-wider uppercase">{t("Hand History")}</h1>
           </div>
           <div className="w-32"></div> {/* Spacer */}
         </header>
 
         <div className="flex-1 overflow-y-auto p-4 md:p-8 z-10">
           <div className="max-w-3xl mx-auto flex flex-col gap-4">
-            <p className="text-slate-400 font-bold mb-2">Select a hand to review play-by-play.</p>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-slate-400 font-bold">{t("Select a hand to review play-by-play.")}</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setHistoryFilter("all")}
+                  className={`px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-wider border transition ${historyFilter === "all" ? "bg-cyan-500/20 text-cyan-300 border-cyan-400/50" : "bg-white/5 text-slate-400 border-white/10 hover:text-white"}`}
+                >
+                  {t("All")}
+                </button>
+                <button
+                  onClick={() => setHistoryFilter("favorites")}
+                  className={`px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-wider border transition ${historyFilter === "favorites" ? "bg-yellow-500/20 text-yellow-300 border-yellow-400/50" : "bg-white/5 text-slate-400 border-white/10 hover:text-white"}`}
+                >
+                  {t("Favorites")}
+                </button>
+              </div>
+            </div>
+            {loading && <p className="text-slate-300 font-semibold">{t("Loading hands...")}</p>}
+            {!loading && errorMessage && (
+              <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-300 font-semibold">
+                {errorMessage}
+              </div>
+            )}
+            {!loading && !errorMessage && visibleHands.length === 0 && (
+              <div className="rounded-xl border border-white/10 bg-[#242754] p-5 text-slate-300 font-semibold">
+                {historyFilter === "favorites"
+                  ? t("No favorite hands yet.")
+                  : t("No hands yet. Play a game first and come back for review.")}
+              </div>
+            )}
             
-            {mockHands.map((hand, idx) => {
+            {visibleHands.map((hand, idx) => {
               const finalStep = hand.steps[hand.steps.length - 1];
               return (
                 <motion.div
                   initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.1 }}
                   key={hand.id} onClick={() => { setSelectedHand(hand); setStepIdx(0); setIsPlaying(false); }}
-                  className="bg-[#242754] border border-white/10 hover:border-orange-500/50 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between cursor-pointer group shadow-lg hover:shadow-[0_0_20px_rgba(249,115,22,0.15)] transition-all"
+                  className="relative bg-[#242754] border border-white/10 hover:border-orange-500/50 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between cursor-pointer group shadow-lg hover:shadow-[0_0_20px_rgba(249,115,22,0.15)] transition-all"
                 >
+                  <button
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void toggleFavorite(hand.id, !hand.favorite);
+                    }}
+                    className={`absolute right-4 top-4 rounded-full p-2 border transition ${hand.favorite ? "bg-yellow-500/20 border-yellow-400/50 text-yellow-300" : "bg-white/5 border-white/10 text-slate-400 hover:text-white"}`}
+                    title={hand.favorite ? t("Remove from favorites") : t("Add to favorites")}
+                  >
+                    <Star className={`w-4 h-4 ${hand.favorite ? "fill-yellow-300" : ""}`} />
+                  </button>
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center gap-3 text-sm">
                       <span className="text-slate-400 font-bold">{hand.date}</span>
@@ -259,6 +647,9 @@ export function HandReview() {
                     <h3 className="text-xl font-black text-white">{hand.title}</h3>
                     <div className="flex items-center gap-2 mt-1">
                       <div className="flex gap-1">
+                        {finalStep.heroCards.length === 0 && (
+                          <span className="text-xs font-bold text-slate-500">{t("Cards Hidden")}</span>
+                        )}
                         {finalStep.heroCards.map((c, i) => (
                           <div key={i} className={`w-6 h-8 bg-white rounded flex items-center justify-center text-xs font-black border border-slate-300 ${c.includes('♥') || c.includes('♦') ? 'text-red-600' : 'text-slate-900'}`}>{c}</div>
                         ))}
@@ -268,9 +659,9 @@ export function HandReview() {
 
                   <div className="mt-4 md:mt-0 flex items-center justify-between md:justify-end md:gap-6 border-t md:border-t-0 border-white/5 pt-4 md:pt-0">
                     <div className="flex flex-col items-end">
-                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Net Result</span>
-                      <span className={`text-xl font-black ${hand.net > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {hand.net > 0 ? '+' : ''}${Math.abs(hand.net).toLocaleString()}
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{t("Net Result")}</span>
+                      <span className={`text-xl font-black ${hand.net > 0 ? 'text-green-400' : hand.net < 0 ? 'text-red-400' : 'text-slate-300'}`}>
+                        {hand.net > 0 ? '+' : hand.net < 0 ? '-' : ''}${Math.abs(hand.net).toLocaleString()}
                       </span>
                     </div>
                     <div className="bg-orange-500/20 p-3 rounded-full group-hover:bg-orange-500 group-hover:text-white transition-colors">
@@ -289,6 +680,10 @@ export function HandReview() {
   // --- Step-by-Step Detail View ---
   const currentStep = selectedHand.steps[stepIdx];
   const isShowdown = currentStep.street === "Showdown";
+  const currentStepAnalysis =
+    currentStep.order !== null
+      ? (stepAnalysisMap[currentStep.order] ?? currentStep.analysis)
+      : currentStep.analysis;
 
   return (
     <div className="flex flex-col w-full h-full bg-[#11122D] font-sans text-white relative overflow-hidden">
@@ -300,12 +695,50 @@ export function HandReview() {
           onClick={() => setSelectedHand(null)}
           className="flex items-center gap-2 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 px-4 py-2 rounded-full font-bold transition"
         >
-          <ArrowLeft className="w-5 h-5" /> Back to List
+          <ArrowLeft className="w-5 h-5" /> {t("Back to List")}
         </button>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              void toggleFavorite(selectedHand.id, !selectedHand.favorite);
+            }}
+            className={`rounded-full p-2 border transition ${selectedHand.favorite ? "bg-yellow-500/20 border-yellow-400/50 text-yellow-300" : "bg-white/5 border-white/10 text-slate-400 hover:text-white"}`}
+            title={selectedHand.favorite ? t("Remove from favorites") : t("Add to favorites")}
+          >
+            <Star className={`w-4 h-4 ${selectedHand.favorite ? "fill-yellow-300" : ""}`} />
+          </button>
           <span className="text-sm font-bold text-slate-400">{selectedHand.title}</span>
+          <select
+            value={analysisProvider}
+            onChange={(event) => setAnalysisProvider(event.target.value as AnalysisProvider)}
+            className="bg-[#11122D] border border-white/10 rounded-lg px-2 py-1 text-xs font-bold text-slate-200"
+          >
+            <option value="local">{t("Local")}</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+          </select>
+          <select
+            value={analysisModel}
+            onChange={(event) => setAnalysisModel(event.target.value)}
+            className="bg-[#11122D] border border-white/10 rounded-lg px-2 py-1 text-xs font-bold text-slate-200"
+          >
+            {ANALYSIS_MODELS[analysisProvider].map((item) => (
+              <option key={`${analysisProvider}-${item.value}`} value={item.value}>{item.label}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => {
+              void analyzeWholeHand();
+            }}
+            disabled={handAnalyzeBusy}
+            className="px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider border border-orange-500/40 bg-orange-500/20 text-orange-300 hover:bg-orange-500/30 disabled:opacity-60 flex items-center gap-1"
+          >
+            <BrainCircuit className="w-3 h-3" />
+            {handAnalyzeBusy ? t("Analyzing") : t("Analyze Hand")}
+          </button>
           <div className="bg-orange-500/20 text-orange-400 px-3 py-1 rounded-full font-mono text-xs font-bold border border-orange-500/30 flex items-center gap-2 uppercase tracking-wider">
-            <Target className="w-3 h-3" /> Step Analysis
+            <Target className="w-3 h-3" /> {t("Step Analysis")}
           </div>
         </div>
       </header>
@@ -346,7 +779,7 @@ export function HandReview() {
            <div className="w-full max-w-[450px] h-[200px] md:h-[260px] bg-[#2E3C98] rounded-full border-[12px] border-[#1D2660] shadow-[inset_0_-5px_30px_rgba(0,0,0,0.5)] flex flex-col items-center justify-center relative mt-8 md:mt-0">
               
               <div className="absolute -top-6 bg-cyan-950/80 px-6 py-2 rounded-full border border-cyan-500/50 flex flex-col items-center shadow-xl backdrop-blur-sm z-10">
-                <span className="text-cyan-400 font-black text-[10px] uppercase tracking-widest">Total Pot</span>
+                <span className="text-cyan-400 font-black text-[10px] uppercase tracking-widest">{t("Total Pot")}</span>
                 <span className="text-white font-black text-xl">${currentStep.pot.toLocaleString()}</span>
               </div>
               
@@ -364,7 +797,7 @@ export function HandReview() {
                     </motion.div>
                   ))}
                   {currentStep.board.length === 0 && (
-                    <span className="text-white/20 font-bold uppercase tracking-widest text-sm">Pre-Flop</span>
+                    <span className="text-white/20 font-bold uppercase tracking-widest text-sm">{t("Pre-Flop")}</span>
                   )}
                 </AnimatePresence>
               </div>
@@ -372,7 +805,7 @@ export function HandReview() {
               {/* Win Probability Bar (Hero) */}
               <div className="absolute -bottom-5 flex flex-col items-center w-full max-w-[200px] md:max-w-[250px] z-10 bg-black/60 px-4 py-1.5 rounded-full border border-white/10 backdrop-blur-sm shadow-xl">
                  <div className="flex justify-between w-full text-[9px] md:text-[10px] uppercase tracking-widest font-bold mb-1">
-                   <span className="text-cyan-400">Win Prob</span>
+                   <span className="text-cyan-400">{t("Win Prob")}</span>
                    <span className="text-slate-400">{currentStep.heroEquity}%</span>
                  </div>
                  <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
@@ -389,13 +822,19 @@ export function HandReview() {
            {/* Hero Area */}
            <div className="absolute bottom-8 md:bottom-12 text-center">
               <div className="flex gap-2 mb-3 justify-center">
+                 {currentStep.heroCards.length === 0 && (
+                   <>
+                     <div className="w-12 h-16 md:w-16 md:h-24 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-indigo-800 to-indigo-950 rounded-lg shadow-2xl border-2 border-white/20" />
+                     <div className="w-12 h-16 md:w-16 md:h-24 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-indigo-800 to-indigo-950 rounded-lg shadow-2xl border-2 border-white/20" />
+                   </>
+                 )}
                  {currentStep.heroCards.map((c, i) => (
                     <motion.div key={`h-${i}`} className={`w-12 h-16 md:w-16 md:h-24 bg-white rounded-lg shadow-2xl flex items-center justify-center text-lg md:text-2xl font-black border-2 border-slate-300 ${c.includes('♥') || c.includes('♦') ? 'text-red-600' : 'text-slate-900'}`}>
                       {c}
                     </motion.div>
                  ))}
               </div>
-              <span className="bg-cyan-500/20 text-cyan-400 px-4 py-1.5 rounded-full text-xs font-bold border border-cyan-500/30 uppercase tracking-wider">Hero (You)</span>
+              <span className="bg-cyan-500/20 text-cyan-400 px-4 py-1.5 rounded-full text-xs font-bold border border-cyan-500/30 uppercase tracking-wider">{t("Hero (You)")}</span>
            </div>
         </div>
 
@@ -405,13 +844,13 @@ export function HandReview() {
            {/* Top: Action Log (Scrollable) */}
            <div className="h-1/3 min-h-[200px] border-b border-white/5 flex flex-col">
              <div className="px-4 py-3 bg-[#1A1C3E] border-b border-white/5 shadow-md z-20 shrink-0">
-               <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest">Play-by-Play Action Log</h3>
+               <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest">{t("Play-by-Play Action Log")}</h3>
              </div>
              <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-[#161836]" ref={logRef}>
                <div className="flex flex-col gap-2">
                  {selectedHand.steps.map((step, idx) => {
                  const isActive = idx === stepIdx;
-                 const isHero = step.player === "Hero";
+                   const isHero = step.isHeroAction;
                  const isSystem = step.player === "System";
 
                  return (
@@ -457,14 +896,20 @@ export function HandReview() {
                     {currentStep.evScore > 0 ? <CheckCircle2 className="w-6 h-6 text-green-400 shrink-0"/> : currentStep.evScore < 0 ? <XCircle className="w-6 h-6 text-red-400 shrink-0"/> : <Target className="w-6 h-6 text-slate-400 shrink-0"/>}
                     <div>
                       <h4 className="font-bold mb-1 text-white flex items-center gap-2">
-                        Step Analysis
+                        {t("Step Analysis")}
                         {currentStep.evScore !== 0 && (
                            <span className={`text-xs px-2 py-0.5 rounded-full ${currentStep.evScore > 0 ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>
                              {currentStep.evScore > 0 ? '+' : ''}{currentStep.evScore} EV
                            </span>
                         )}
                       </h4>
-                      <p className="text-sm text-slate-300 leading-relaxed">{currentStep.analysis}</p>
+                      <p className="text-sm text-slate-300 leading-relaxed">{currentStepAnalysis}</p>
+                      {analysisSummary && (
+                        <p className="mt-2 text-xs font-semibold text-cyan-300">{analysisSummary}</p>
+                      )}
+                      {analysisError && (
+                        <p className="mt-2 text-xs font-semibold text-red-300">{analysisError}</p>
+                      )}
                     </div>
                   </div>
 
@@ -472,14 +917,14 @@ export function HandReview() {
                   <div className="bg-[#242754] p-4 md:p-5 rounded-2xl border border-white/5 shadow-lg flex flex-col items-center relative">
                      {isShowdown && (
                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm rounded-2xl flex flex-col items-center justify-center z-20">
-                          <span className="text-2xl font-black text-white uppercase tracking-widest">Hand Over</span>
+                          <span className="text-2xl font-black text-white uppercase tracking-widest">{t("Hand Over")}</span>
                           <span className="text-sm text-slate-300 mt-2 font-bold">{currentStep.desc}</span>
                        </div>
                      )}
                      
                      <div className="flex justify-between w-full mb-4 items-end">
-                       <h4 className="font-black text-slate-300 uppercase tracking-wider text-xs md:text-sm">Opponent Range Estimate</h4>
-                       <span className="text-[10px] md:text-xs font-bold text-orange-400 bg-orange-500/10 px-2 py-1 rounded">Live updating...</span>
+                       <h4 className="font-black text-slate-300 uppercase tracking-wider text-xs md:text-sm">{t("Opponent Range Estimate")}</h4>
+                       <span className="text-[10px] md:text-xs font-bold text-orange-400 bg-orange-500/10 px-2 py-1 rounded">{t("Live updating...")}</span>
                      </div>
                      
                      <div className="grid grid-cols-13 gap-[1px] md:gap-[2px] bg-slate-800 p-1 md:p-1.5 rounded-lg border border-white/10 w-full max-w-[320px] aspect-square" style={{ gridTemplateColumns: 'repeat(13, minmax(0, 1fr))'}}>
@@ -507,11 +952,11 @@ export function HandReview() {
                      </div>
                      
                      <div className="flex flex-wrap gap-3 md:gap-5 mt-4 text-[9px] md:text-xs font-bold text-slate-400 w-full justify-center">
-                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-red-500 rounded-sm shadow-sm"></div> All-in</div>
-                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-orange-500 rounded-sm shadow-sm"></div> Raise</div>
-                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-blue-500 rounded-sm shadow-sm"></div> Call/Check</div>
-                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-gradient-to-br from-orange-500 to-blue-500 rounded-sm shadow-sm"></div> Mixed</div>
-                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-slate-800 border border-slate-600 rounded-sm"></div> Fold</div>
+                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-red-500 rounded-sm shadow-sm"></div> {t("All-in")}</div>
+                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-orange-500 rounded-sm shadow-sm"></div> {t("Raise")}</div>
+                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-blue-500 rounded-sm shadow-sm"></div> {t("Call/Check")}</div>
+                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-gradient-to-br from-orange-500 to-blue-500 rounded-sm shadow-sm"></div> {t("Mixed")}</div>
+                       <div className="flex items-center gap-1.5"><div className="w-3 h-3 bg-slate-800 border border-slate-600 rounded-sm"></div> {t("Fold")}</div>
                      </div>
                   </div>
                 </motion.div>
@@ -532,7 +977,7 @@ export function HandReview() {
                onClick={() => setIsPlaying(!isPlaying)}
                className={`flex items-center gap-2 px-6 py-3 rounded-full font-black text-sm uppercase tracking-wider transition-all shadow-lg ${isPlaying ? 'bg-red-500/20 text-red-400 border border-red-500/50 hover:bg-red-500/30' : 'bg-orange-500 text-white hover:bg-orange-400 shadow-[0_4px_0_#C2410C] active:translate-y-1 active:shadow-none'}`}
              >
-               {isPlaying ? <><PauseCircle className="w-5 h-5"/> Pause</> : <><PlayCircle className="w-5 h-5"/> Auto Play</>}
+               {isPlaying ? <><PauseCircle className="w-5 h-5"/> {t("Pause")}</> : <><PlayCircle className="w-5 h-5"/> {t("Auto Play")}</>}
              </button>
 
              <button 

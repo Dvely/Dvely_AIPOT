@@ -1,9 +1,11 @@
 import { Outlet } from "react-router";
 import { useEffect, useState } from "react";
 import { RotateCw } from "lucide-react";
+import { useI18n } from "../i18n";
 
 export function Root() {
   const [isPortrait, setIsPortrait] = useState(false);
+  const { t } = useI18n();
 
   useEffect(() => {
     const handleResize = () => {
@@ -25,9 +27,9 @@ export function Root() {
       {isPortrait ? (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-900 text-center p-6 space-y-4">
           <RotateCw className="w-16 h-16 text-yellow-400 animate-spin-slow" />
-          <h1 className="text-2xl font-bold">Please rotate your device</h1>
+          <h1 className="text-2xl font-bold">{t("Please rotate your device")}</h1>
           <p className="text-slate-300">
-            AIPOT is designed for the best experience in landscape mode.
+            {t("AIPOT is designed for the best experience in landscape mode.")}
           </p>
         </div>
       ) : (
