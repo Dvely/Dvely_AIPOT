@@ -20,12 +20,17 @@ export function AuthScreen() {
     if (errorMessage) setErrorMessage("");
   };
 
-  const handleGuestLogin = () => {
-    signInGuest();
+  const handleGuestLogin = async () => {
+    const result = await signInGuest();
+    if (!result.ok) {
+      setErrorMessage(result.message || "게스트 로그인에 실패했습니다.");
+      return;
+    }
+
     navigate("/loading");
   };
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     resetMessage();
 
@@ -36,7 +41,7 @@ export function AuthScreen() {
     }
 
     if (mode === "signin") {
-      const result = signInUser(trimmedNickname, password);
+      const result = await signInUser(trimmedNickname, password);
       if (!result.ok) {
         setErrorMessage(result.message || "로그인에 실패했습니다.");
         return;
@@ -56,15 +61,9 @@ export function AuthScreen() {
       return;
     }
 
-    const signUpResult = signUpUser(trimmedNickname, password);
+    const signUpResult = await signUpUser(trimmedNickname, password);
     if (!signUpResult.ok) {
       setErrorMessage(signUpResult.message || "회원가입에 실패했습니다.");
-      return;
-    }
-
-    const signInResult = signInUser(trimmedNickname, password);
-    if (!signInResult.ok) {
-      setErrorMessage(signInResult.message || "회원가입 후 로그인에 실패했습니다.");
       return;
     }
 

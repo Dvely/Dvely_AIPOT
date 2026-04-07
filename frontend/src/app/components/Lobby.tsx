@@ -5,6 +5,113 @@ import {
   Coins, Menu, Crown, Settings, Plus, Target, Users, Swords, BookOpen, X, Lock, Unlock, LogOut, CheckCircle2, ShoppingBag, Info, Trophy, Timer, Volume2, Globe, ChevronRight
 } from "lucide-react";
 import { getCurrentAuth, signOut } from "../auth";
+import { apiFetch } from "../api";
+
+type LobbyRoomType = "ai_bot" | "cash" | "tournament";
+
+interface LobbyTableSummary {
+  id: string;
+  name: string;
+  type: LobbyRoomType;
+  status: string;
+  currentPlayers: number;
+  maxPlayers: number;
+  isPrivate: boolean;
+  code?: string;
+}
+
+interface LobbyTableItem {
+  id: string;
+  type: "bot" | "cash" | "tournament";
+  name: string;
+  stakes: string;
+  players: number;
+  max: number;
+  isPrivate: boolean;
+  status?: string;
+  prizePool?: string;
+  itm?: string;
+  buyIn?: string;
+  highlight?: boolean;
+  code?: string;
+}
+
+const fallbackTables: LobbyTableItem[] = [
+  {
+    id: "t1",
+    type: "tournament",
+    name: "Seoul Qualifier (Lvl 4)",
+    stakes: "100/200",
+    players: 128,
+    max: 500,
+    isPrivate: false,
+    status: "Late Reg",
+    prizePool: "$50,000",
+    itm: "Top 36",
+    buyIn: "$100",
+  },
+  {
+    id: "t2",
+    type: "tournament",
+    name: "Sunday Million",
+    stakes: "500/1K",
+    players: 450,
+    max: 1000,
+    isPrivate: false,
+    status: "Running",
+    prizePool: "$1,000,000",
+    itm: "Top 100",
+    buyIn: "$500",
+  },
+  {
+    id: "ai-practice",
+    type: "bot",
+    name: "AI Bot Practice Room",
+    stakes: "0/0",
+    players: 1,
+    max: 8,
+    isPrivate: false,
+    highlight: true,
+  },
+  {
+    id: "c1",
+    type: "cash",
+    name: "Seoul High Roller",
+    stakes: "500/1K",
+    players: 4,
+    max: 8,
+    isPrivate: false,
+  },
+  {
+    id: "c2",
+    type: "cash",
+    name: "Beginner Friendly",
+    stakes: "50/100",
+    players: 2,
+    max: 8,
+    isPrivate: false,
+  },
+];
+
+function toLobbyTable(summary: LobbyTableSummary): LobbyTableItem {
+  const mappedType: LobbyTableItem["type"] =
+    summary.type === "ai_bot" ? "bot" : summary.type;
+
+  return {
+    id: summary.id,
+    type: mappedType,
+    name: summary.name,
+    stakes: "50/100",
+    players: summary.currentPlayers,
+    max: summary.maxPlayers,
+    isPrivate: summary.isPrivate,
+    status: summary.status,
+    code: summary.code,
+    buyIn: summary.type === "tournament" ? "$100" : undefined,
+    prizePool: summary.type === "tournament" ? "$50,000" : undefined,
+    itm: summary.type === "tournament" ? "Top 36" : undefined,
+  };
+}
 
 export function Lobby() {
   const navigate = useNavigate();
@@ -25,8 +132,41 @@ export function Lobby() {
     mouth: "smile",
     eyes: "default"
   });
+  const [tables, setTables] = useState<LobbyTableItem[]>(fallbackTables);
+  const [tableLoading, setTableLoading] = useState(false);
+  const [joinCode, setJoinCode] = useState("");
   
   const { isLoggedIn, isPro, userName } = getCurrentAuth();
+
+  const navigateToRoom = (roomId: string, state?: Record<string, unknown>) => {
+    const query = new URLSearchParams({ roomId }).toString();
+    navigate(`/play?${query}`, {
+      state: {
+        ...(state ?? {}),
+        roomId,
+      },
+    });
+  };
+
+  const loadTables = async () => {
+    setTableLoading(true);
+    try {
+      const list = await apiFetch<LobbyTableSummary[]>("/lobby/tables");
+      if (Array.isArray(list) && list.length > 0) {
+        setTables(list.map(toLobbyTable));
+      } else {
+        setTables(fallbackTables);
+      }
+    } catch {
+      setTables(fallbackTables);
+    } finally {
+      setTableLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadTables();
+  }, []);
 
   const gameModes = [
     {
@@ -61,16 +201,6 @@ export function Lobby() {
     },
   ];
 
-  const mockTables = [
-    { id: "t1", type: "tournament", name: "Seoul Qualifier (Lvl 4)", stakes: "100/200", players: 128, max: 500, isPrivate: false, status: "Late Reg", prizePool: "$50,000", itm: "Top 36", buyIn: "$100" },
-    { id: "t2", type: "tournament", name: "Sunday Million", stakes: "500/1K", players: 450, max: 1000, isPrivate: false, status: "Running", prizePool: "$1,000,000", itm: "Top 100", buyIn: "$500" },
-    { id: "ai-practice", type: "bot", name: "AI Bot Practice Room", stakes: "0/0", players: 1, max: 8, isPrivate: false, highlight: true },
-    { id: 1, type: "cash", name: "Seoul High Roller", stakes: "500/1K", players: 4, max: 8, isPrivate: false },
-    { id: 2, type: "cash", name: "Beginner Friendly", stakes: "50/100", players: 2, max: 8, isPrivate: false },
-    { id: 3, type: "cash", name: "VIP Lounge", stakes: "1K/2K", players: 5, max: 8, isPrivate: true },
-    { id: 4, type: "cash", name: "Friday Night Poker", stakes: "100/200", players: 6, max: 8, isPrivate: true },
-  ];
-
   const mockLeaderboard = [
     { rank: 1, name: "PokerKing99", chips: "$45,200,000", isMe: false },
     { rank: 2, name: "AllInAl", chips: "$38,150,000", isMe: false },
@@ -85,33 +215,78 @@ export function Lobby() {
     { id: 3, title: "Review 1 Hand", progress: 0, max: 1, reward: "Pro Ticket" },
   ];
 
-  const handleTableClick = (table: any) => {
+  const handleTableClick = async (table: LobbyTableItem) => {
     if (table.type === "tournament" && !isLoggedIn) {
       alert("Guest cannot enter tournaments. Please sign in with your account.");
       return;
     }
+
+    if (table.players >= table.max) {
+      navigateToRoom(table.id, {
+        mode: table.type,
+        table,
+        spectate: true,
+      });
+      return;
+    }
+
     if (table.isPrivate) {
       setPasswordModalTable(table);
+      setJoinCode(table.code ?? "");
     } else {
-      navigate("/play", { state: { mode: table.type, table: table, spectate: table.players >= table.max } });
+      try {
+        await apiFetch(`/rooms/${table.id}/join-public`, { method: "POST" });
+        navigateToRoom(table.id, {
+          mode: table.type,
+          table,
+          spectate: false,
+        });
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "테이블 입장에 실패했습니다.");
+      }
     }
   };
 
-  const handleGameModeClick = (id: string) => {
+  const handleGameModeClick = async (id: string) => {
     if (id === "review") {
       if (!isPro) return alert("Hand Review requires a PRO subscription.");
       navigate("/review");
+      return;
     }
-    else if (id === "tournament") {
-      if (!isLoggedIn) return alert("Guest cannot play tournaments.");
-      navigate("/play", { state: { mode: "tournament" } });
+
+    if (id === "tournament" && !isLoggedIn) {
+      alert("Guest cannot play tournaments.");
+      return;
     }
-    else navigate("/play", { state: { mode: "cash" } });
+
+    const roomType: LobbyRoomType =
+      id === "ai-bot" ? "ai_bot" : id === "tournament" ? "tournament" : "cash";
+
+    try {
+      const result = await apiFetch<{ matched: boolean; roomId?: string; reason?: string }>(
+        "/lobby/quick-play",
+        {
+          method: "POST",
+          body: JSON.stringify({ roomType }),
+        },
+      );
+
+      if (!result.matched || !result.roomId) {
+        alert(result.reason ?? "매칭 가능한 룸이 없습니다.");
+        return;
+      }
+
+      navigateToRoom(result.roomId, {
+        mode: id === "ai-bot" ? "bot" : id,
+      });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "퀵플레이 연결에 실패했습니다.");
+    }
   };
 
-  const tournaments = mockTables.filter(t => t.type === "tournament");
-  const cashGames = mockTables.filter(t => t.type === "cash");
-  const botGames = mockTables.filter(t => t.type === "bot");
+  const tournaments = tables.filter((t) => t.type === "tournament");
+  const cashGames = tables.filter((t) => t.type === "cash");
+  const botGames = tables.filter((t) => t.type === "bot");
 
   return (
     <div className="flex flex-col w-full h-full bg-[#1A1B41] font-sans text-white relative overflow-hidden select-none">
@@ -374,7 +549,14 @@ export function Lobby() {
                 <div className="flex flex-col gap-3 mt-4">
                   <div className="flex justify-between items-center mb-1">
                     <h2 className="text-xl font-black text-white flex items-center gap-2"><Coins className="text-green-400 w-5 h-5"/> Cash Games</h2>
-                    <button className="text-cyan-400 text-sm font-bold hover:text-cyan-300">Refresh</button>
+                    <button
+                      onClick={() => {
+                        void loadTables();
+                      }}
+                      className="text-cyan-400 text-sm font-bold hover:text-cyan-300"
+                    >
+                      {tableLoading ? "Loading..." : "Refresh"}
+                    </button>
                   </div>
                   
                   {cashGames.map((table, idx) => (
@@ -523,9 +705,9 @@ export function Lobby() {
                 <div className="flex flex-col gap-4">
                   <div>
                     <label className="block text-sm font-bold text-slate-300 mb-1">Game Mode</label>
-                    <select className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition">
+                    <select id="createTableMode" className="w-full bg-[#11122D] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition">
                       <option value="ai-bot">AI Bot Training (No Money Risk)</option>
-                      <option value="cash" disabled>Cash Game (Coming Soon)</option>
+                      <option value="cash">Cash Game</option>
                     </select>
                   </div>
                   <div>
@@ -539,9 +721,29 @@ export function Lobby() {
                   </div>
                 </div>
                 <button 
-                  onClick={() => {
+                  onClick={async () => {
                      const maxVal = parseInt((document.getElementById("createTableMax") as HTMLSelectElement)?.value || "8");
-                     navigate("/play", { state: { table: { players: 1, max: maxVal, stakes: "0/0", isPrivate: true, name: "Custom Bot Game" } } });
+                     const modeVal = (document.getElementById("createTableMode") as HTMLSelectElement)?.value || "ai-bot";
+                     const roomType: LobbyRoomType = modeVal === "cash" ? "cash" : "ai_bot";
+
+                     try {
+                       const created = await apiFetch<{ id: string; type: LobbyRoomType }>("/rooms", {
+                         method: "POST",
+                         body: JSON.stringify({
+                           name: modeVal === "cash" ? "Custom Cash Game" : "Custom Bot Game",
+                           type: roomType,
+                           maxSeats: maxVal,
+                         }),
+                       });
+
+                       setShowCreateModal(false);
+                       void loadTables();
+                       navigateToRoom(created.id, {
+                         mode: created.type === "ai_bot" ? "bot" : created.type,
+                       });
+                     } catch (error) {
+                       alert(error instanceof Error ? error.message : "테이블 생성에 실패했습니다.");
+                     }
                   }}
                   className="mt-6 w-full font-black py-4 rounded-xl text-white uppercase tracking-wider transition-all active:translate-y-1 shadow-lg bg-gradient-to-b from-yellow-400 to-orange-500 shadow-[0_4px_0_#B45309]"
                 >
@@ -572,17 +774,42 @@ export function Lobby() {
                 <h3 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
                   <Lock className="text-red-400 w-6 h-6"/> Private Table
                 </h3>
-                <button onClick={() => setPasswordModalTable(null)} className="text-slate-400 hover:text-white transition">
+                <button onClick={() => { setPasswordModalTable(null); setJoinCode(""); }} className="text-slate-400 hover:text-white transition">
                   <X className="w-6 h-6" />
                 </button>
               </div>
               <div className="p-6">
                 <div className="flex flex-col gap-4">
                   <p className="text-sm font-semibold text-slate-300">This table is protected. Please enter the password set by the host to join.</p>
-                  <input type="password" placeholder="Enter Password" autoFocus className="w-full bg-[#11122D] border border-white/10 rounded-lg p-4 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-500 text-center text-lg tracking-widest" />
+                  <input
+                    type="text"
+                    placeholder="Enter Room Code"
+                    autoFocus
+                    value={joinCode}
+                    onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
+                    className="w-full bg-[#11122D] border border-white/10 rounded-lg p-4 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-500 text-center text-lg tracking-widest"
+                  />
                 </div>
                 <button 
-                  onClick={() => navigate("/play", { state: { mode: passwordModalTable.type, spectate: passwordModalTable.players >= passwordModalTable.max } })}
+                  onClick={async () => {
+                    try {
+                      const room = await apiFetch<{ id: string; type: LobbyRoomType }>(
+                        "/rooms/join/code",
+                        {
+                          method: "POST",
+                          body: JSON.stringify({ code: joinCode.trim().toUpperCase() }),
+                        },
+                      );
+
+                      setPasswordModalTable(null);
+                      setJoinCode("");
+                      navigateToRoom(room.id, {
+                        mode: room.type === "ai_bot" ? "bot" : room.type,
+                      });
+                    } catch (error) {
+                      alert(error instanceof Error ? error.message : "코드 입장에 실패했습니다.");
+                    }
+                  }}
                   className="mt-6 w-full font-black py-4 rounded-xl text-white uppercase tracking-wider transition-all active:translate-y-1 shadow-lg bg-gradient-to-b from-cyan-500 to-blue-600 shadow-[0_4px_0_#1D4ED8]"
                 >
                   Enter Table
@@ -638,7 +865,14 @@ export function Lobby() {
                       key={tbl.id}
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
-                      onClick={() => navigate("/play", { state: { mode: "tournament", spectate: true, tournamentTable: tbl.id } })}
+                      onClick={() => {
+                        if (!spectateTournamentModal?.id) return;
+                        navigateToRoom(spectateTournamentModal.id, {
+                          mode: "tournament",
+                          spectate: true,
+                          tournamentTable: tbl.id,
+                        });
+                      }}
                       className="bg-[#11122D] border border-white/10 hover:border-purple-500/50 p-4 rounded-xl cursor-pointer group transition-all relative overflow-hidden"
                     >
                       <div className="absolute inset-0 bg-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity" />
