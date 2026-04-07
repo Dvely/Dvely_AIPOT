@@ -15,6 +15,7 @@ interface Player {
   pos: Position;
   role: Role;
   avatarSeed: string;
+  avatarUrl?: string;
   chips: number;
   bet: number;
   status: "active" | "folded";
@@ -29,11 +30,22 @@ interface LiveParticipant {
   seatId: number;
   playerId: string;
   userId?: string;
+  roleType?: "human" | "bot";
   displayName: string;
   stackAmount: number;
   currentBetAmount: number;
   folded: boolean;
+  allIn?: boolean;
   holeCards: string[];
+  avatarInfo?: {
+    hairStyle: string;
+    skinTone: string;
+    hairColor: string;
+    faceType: string;
+    eyeType: string;
+    mouthType: string;
+    outfit: string;
+  } | null;
 }
 
 interface LiveSeat {
@@ -143,6 +155,20 @@ function toUiRole(label?: string): Role {
   return "UTG";
 }
 
+function toAvatarUrl(seed: string, avatar?: LiveParticipant["avatarInfo"]): string {
+  const params = new URLSearchParams({ seed });
+  if (avatar) {
+    params.set("top", avatar.hairStyle);
+    params.set("skinColor", avatar.skinTone);
+    params.set("hairColor", avatar.hairColor);
+    params.set("clothing", avatar.outfit);
+    params.set("mouth", avatar.mouthType);
+    params.set("eyes", avatar.eyeType);
+    params.set("eyebrows", avatar.faceType);
+  }
+  return `https://api.dicebear.com/7.x/avataaars/svg?${params.toString()}`;
+}
+
 function toUiPhase(roomStatus: string, street?: string): GamePhase {
   if (roomStatus === "HAND_ENDED" || street === "RESULT" || street === "SHOWDOWN") {
     return "showdown";
@@ -173,6 +199,7 @@ function samePlayers(prev: Player[], next: Player[]) {
       a.pos !== b.pos ||
       a.role !== b.role ||
       a.avatarSeed !== b.avatarSeed ||
+      a.avatarUrl !== b.avatarUrl ||
       a.chips !== b.chips ||
       a.bet !== b.bet ||
       a.status !== b.status ||
@@ -337,11 +364,25 @@ export function PlayTable() {
     : roomMode === "cash"
       ? "Cash Game"
       : "Game Table";
+  const hasLiveBot = liveRoom?.seats.some((seat) => seat.participant?.roleType === "bot") ?? false;
+  const autoContinueBotRoom = Boolean(
+    isLiveMode &&
+    liveRoom?.type === "ai_bot" &&
+    liveRoom?.isPrivate &&
+    hasLiveBot,
+  );
 
   const syncLiveTable = async () => {
     if (!isLiveMode) return;
 
     try {
+      let game: LiveGameSnapshot | null = null;
+      try {
+        game = await apiFetch<LiveGameSnapshot>(`/game/rooms/${roomId}/state`);
+      } catch {
+        game = null;
+      }
+
       const room = await apiFetch<LiveRoom>(`/rooms/${roomId}`);
       setLiveRoom((prev) => {
         const prevSeats = prev?.seats ?? [];
@@ -381,13 +422,6 @@ export function PlayTable() {
         }
         return room;
       });
-
-      let game: LiveGameSnapshot | null = null;
-      try {
-        game = await apiFetch<LiveGameSnapshot>(`/game/rooms/${roomId}/state`);
-      } catch {
-        game = null;
-      }
       setLiveGame((prev) => {
         if (!prev && !game) return prev;
         if (!prev || !game) return game;
@@ -436,6 +470,7 @@ export function PlayTable() {
             pos: Math.max(0, seat.seatId - 1),
             role: toUiRole(rawLabel),
             avatarSeed: participant.displayName,
+            avatarUrl: toAvatarUrl(participant.displayName, participant.avatarInfo),
             chips: participant.stackAmount,
             bet: participant.currentBetAmount,
             status: participant.folded ? "folded" : "active",
@@ -500,7 +535,7 @@ export function PlayTable() {
       if (!liveBusy) {
         void syncLiveTable();
       }
-    }, 2500);
+    }, 1000);
 
     return () => clearInterval(timer);
   }, [isLiveMode, roomId, currentUserId, liveBusy]);
@@ -1260,7 +1295,12 @@ export function PlayTable() {
 
         {/* START GAME / DEAL HAND Button */}
         {((!isLiveMode && phase === "init" && userState === "playing") ||
-          (isLiveMode && canManageLiveRoom && liveRoom && (liveRoom.status === "WAITING_SETUP" || liveRoom.status === "READY" || liveRoom.status === "HAND_ENDED"))) && (
+          (isLiveMode &&
+            canManageLiveRoom &&
+            liveRoom &&
+            (liveRoom.status === "WAITING_SETUP" ||
+              liveRoom.status === "READY" ||
+              (liveRoom.status === "HAND_ENDED" && !autoContinueBotRoom)))) && (
           <button 
             onClick={() => {
               if (isLiveMode) {
@@ -1421,7 +1461,7 @@ export function PlayTable() {
               {p.role}
             </div>
 
-            <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${p.avatarSeed}`} alt={p.name} className="w-full h-full object-cover rounded-full" />
+            <img src={p.avatarUrl ?? toAvatarUrl(p.avatarSeed)} alt={p.name} className="w-full h-full object-cover rounded-full" />
             
             {p.status === 'folded' && (
               <div className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center text-sm font-black text-white">

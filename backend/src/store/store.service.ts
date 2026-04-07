@@ -74,7 +74,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 					continue;
 				}
 
-				if (this.autoAdvancePublicRoom(room)) {
+				if (this.autoAdvanceRoom(room)) {
 					dirty = true;
 				}
 
@@ -274,8 +274,29 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		);
 	}
 
-	private autoAdvancePublicRoom(room: RoomRecord): boolean {
-		if (room.isPrivate || room.status === RoomStatus.CLOSED) {
+	private shouldAutoAdvanceRoom(room: RoomRecord): boolean {
+		if (room.status === RoomStatus.CLOSED) {
+			return false;
+		}
+
+		if (!room.isPrivate) {
+			return true;
+		}
+
+		if (room.type !== RoomType.AI_BOT) {
+			return false;
+		}
+
+		const hasBot = room.seats.some(
+			(seat) => seat.participant?.roleType === ParticipantType.BOT,
+		);
+		const seated = this.countParticipants(room);
+		const humans = this.countHumanParticipants(room);
+		return hasBot && seated >= 2 && humans >= 1;
+	}
+
+	private autoAdvanceRoom(room: RoomRecord): boolean {
+		if (!this.shouldAutoAdvanceRoom(room)) {
 			return false;
 		}
 
