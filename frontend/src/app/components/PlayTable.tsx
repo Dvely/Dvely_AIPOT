@@ -248,8 +248,8 @@ const getInitialPlayers = (count: number, max: number): Player[] => {
 const FULL_COMMUNITY_CARDS = ["Q♠", "J♠", "10♠", "2♥", "5♣"];
 const HERO_CARDS = ["A♠", "K♠"];
 const TURN_TIMER_SECONDS = 15;
-const SHOWDOWN_RESULT_DISPLAY_MS = 10000;
-const QUICK_RESULT_DISPLAY_MS = 6000;
+const SHOWDOWN_RESULT_DISPLAY_MS = 20000;
+const QUICK_RESULT_DISPLAY_MS = 12000;
 const HAND_RESET_CLEANUP_MS = 5000;
 
 const RAW_SUITS = ["S", "H", "D", "C"];
@@ -544,6 +544,7 @@ export function PlayTable() {
   const [winningCards, setWinningCards] = useState<string[]>([]);
   const [winningHandRank, setWinningHandRank] = useState<string | null>(null);
   const [showdownHoldUntil, setShowdownHoldUntil] = useState(0);
+  const showdownHoldUntilRef = useRef(0);
   const [liveRoom, setLiveRoom] = useState<LiveRoom | null>(null);
   const [liveGame, setLiveGame] = useState<LiveGameSnapshot | null>(null);
   const [heroSeatId, setHeroSeatId] = useState<number | null>(null);
@@ -600,6 +601,10 @@ export function PlayTable() {
   const turnTimerResetToken = isLiveMode
     ? `${liveGame?.gameState?.handId ?? "no-hand"}:${liveGame?.gameState?.street ?? "no-street"}:${liveGame?.gameState?.currentTurnSeatId ?? "none"}:${liveGame?.gameState?.minCallAmount ?? 0}:${liveGame?.gameState?.maxBetAmount ?? 0}`
     : `${phase}:${activeTurn ?? "none"}`;
+
+  useEffect(() => {
+    showdownHoldUntilRef.current = showdownHoldUntil;
+  }, [showdownHoldUntil]);
 
   const syncLiveTable = async () => {
     if (!isLiveMode) return;
@@ -751,14 +756,18 @@ export function PlayTable() {
 
           setWinner((prev) => (prev === winnerLocalId ? prev : winnerLocalId));
           setWinningCards((prev) => (sameStringArray(prev, winnerUiCards) ? prev : winnerUiCards));
-          setShowdownHoldUntil((prev) => Math.max(prev, Date.now() + SHOWDOWN_RESULT_DISPLAY_MS));
+          setShowdownHoldUntil((prev) => {
+            const next = Math.max(prev, Date.now() + SHOWDOWN_RESULT_DISPLAY_MS);
+            showdownHoldUntilRef.current = next;
+            return next;
+          });
 
           if (winnerRawCards.length === 2 && game.gameState.boardCards.length >= 3) {
             const score = bestScore([...winnerRawCards, ...game.gameState.boardCards]);
             const nextRank = handScoreLabel(score);
             setWinningHandRank((prev) => (prev === nextRank ? prev : nextRank));
           }
-        } else if (room.status !== "HAND_ENDED" && Date.now() >= showdownHoldUntil) {
+        } else if (room.status !== "HAND_ENDED" && Date.now() >= showdownHoldUntilRef.current) {
           setWinner((prev) => (prev === null ? prev : null));
           setWinningCards((prev) => (prev.length === 0 ? prev : []));
           setWinningHandRank((prev) => (prev === null ? prev : null));
@@ -774,7 +783,7 @@ export function PlayTable() {
         setCommunityCards((prev) => (prev.length === 0 ? prev : []));
         setPot((prev) => (prev === 0 ? prev : 0));
         setActiveTurn((prev) => (prev === null ? prev : null));
-        if (Date.now() >= showdownHoldUntil) {
+        if (Date.now() >= showdownHoldUntilRef.current) {
           setWinner((prev) => (prev === null ? prev : null));
           setWinningCards((prev) => (prev.length === 0 ? prev : []));
           setWinningHandRank((prev) => (prev === null ? prev : null));
@@ -1044,7 +1053,9 @@ export function PlayTable() {
            setWinningHandRank("Royal Flush");
            setPlayers(prev => prev.map(p => p.id === "hero" ? { ...p, chips: p.chips + pot } : p));
        }
-         setShowdownHoldUntil(Date.now() + SHOWDOWN_RESULT_DISPLAY_MS);
+       const holdUntil = Date.now() + SHOWDOWN_RESULT_DISPLAY_MS;
+       showdownHoldUntilRef.current = holdUntil;
+       setShowdownHoldUntil(holdUntil);
        setTimeout(() => {
           resetHand();
          }, SHOWDOWN_RESULT_DISPLAY_MS);
@@ -1089,6 +1100,7 @@ export function PlayTable() {
       setWinner(null);
       setWinningCards([]);
       setWinningHandRank(null);
+      showdownHoldUntilRef.current = 0;
       setShowdownHoldUntil(0);
       setPlayers(prev => prev.map(p => ({
         ...p,
@@ -1271,9 +1283,16 @@ export function PlayTable() {
             method: "POST",
             body: JSON.stringify(payload),
           });
+          setActiveTurn((prev) => (prev === "hero" ? null : prev));
           setIsRaising(false);
           setRaiseAmount("");
           await syncLiveTable();
+          setTimeout(() => {
+            void syncLiveTable();
+          }, 180);
+          setTimeout(() => {
+            void syncLiveTable();
+          }, 420);
         } catch (error) {
           alert(error instanceof Error ? error.message : "액션 처리에 실패했습니다.");
         } finally {
@@ -1317,7 +1336,9 @@ export function PlayTable() {
                 setWinningHandRank("Straight Flush");
                 setTimeout(() => setUserState("eliminated"), 4000);
              }
-               setShowdownHoldUntil(Date.now() + SHOWDOWN_RESULT_DISPLAY_MS);
+             const holdUntil = Date.now() + SHOWDOWN_RESULT_DISPLAY_MS;
+             showdownHoldUntilRef.current = holdUntil;
+             setShowdownHoldUntil(holdUntil);
              setTimeout(() => {
                 setActiveTurn(null);
                 resetHand();
@@ -1705,7 +1726,7 @@ export function PlayTable() {
       {players.map((p) => (
         <div key={p.id} className={`absolute flex flex-col items-center z-30 transition-all ${p.id === 'hero' && userState !== 'playing' ? 'opacity-40 grayscale sepia' : ''}`} style={getPlayerPosStyle(p.pos, tableSeatCount)}>
           
-          <div className={`absolute z-20 ${p.id === 'hero' ? 'translate-x-4 -translate-y-4 md:translate-x-6 md:-translate-y-6' : ''}`} style={getBetPosStyle(p.pos, tableSeatCount)}>
+          <div className={`absolute z-20 ${p.id === 'hero' ? 'translate-x-8 -translate-y-8 md:translate-x-12 md:-translate-y-12' : ''}`} style={getBetPosStyle(p.pos, tableSeatCount)}>
             <ChipStack amount={p.bet} />
           </div>
 
@@ -1785,7 +1806,7 @@ export function PlayTable() {
           </div>
 
           <div className={`relative w-20 h-20 md:w-24 md:h-24 rounded-full border-4 shadow-2xl z-30 bg-slate-800 ${activeTurn === p.id ? 'border-cyan-400 shadow-[0_0_30px_rgba(6,182,212,0.6)] scale-105 transition-transform' : 'border-slate-700'} ${p.status === 'folded' ? 'opacity-50 grayscale' : ''}`}>
-            <TimerRing isActive={activeTurn === p.id} duration={TURN_TIMER_SECONDS} resetToken={turnTimerResetToken} />
+            <TimerRing isActive={activeTurn === p.id && !(p.id === 'hero' && actionBusy)} duration={TURN_TIMER_SECONDS} resetToken={turnTimerResetToken} />
             
             <div className={`absolute -right-2 -top-2 md:-right-3 md:-top-3 w-8 h-8 md:w-10 md:h-10 rounded-full border-2 border-slate-900 flex items-center justify-center text-[10px] md:text-xs font-black text-white shadow-lg ${
               p.role === 'BTN' ? 'bg-white text-slate-900' :
