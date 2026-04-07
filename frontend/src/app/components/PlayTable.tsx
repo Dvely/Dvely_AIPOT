@@ -128,6 +128,7 @@ interface LiveGameState {
   maxBetAmount: number;
   potAmount: number;
   positions: Record<string, string>;
+  winnerPlayerIds?: string[];
 }
 
 interface LiveGameSnapshot {
@@ -378,6 +379,20 @@ function bestScore(cards: string[]): HandScore {
     }
   }
   return best;
+}
+
+function handScoreLabel(score: HandScore): string {
+  if (score.category === 8) {
+    return score.values[0] === 14 ? "Royal Flush" : "Straight Flush";
+  }
+  if (score.category === 7) return "Four of a Kind";
+  if (score.category === 6) return "Full House";
+  if (score.category === 5) return "Flush";
+  if (score.category === 4) return "Straight";
+  if (score.category === 3) return "Three of a Kind";
+  if (score.category === 2) return "Two Pair";
+  if (score.category === 1) return "One Pair";
+  return "High Card";
 }
 
 function estimateHeroWinRate(params: {
@@ -716,6 +731,29 @@ export function PlayTable() {
         setPot((prev) => (prev === game.gameState.potAmount ? prev : game.gameState.potAmount));
         setActiveTurn((prev) => (prev === nextTurn ? prev : nextTurn));
 
+        const winnerPlayerId = game.gameState.winnerPlayerIds?.[0];
+        if (winnerPlayerId) {
+          const winnerSeat = room.seats.find(
+            (seat) => seat.participant?.playerId === winnerPlayerId,
+          );
+          const winnerLocalId = winnerSeat ? seatMap.get(winnerSeat.seatId) ?? null : null;
+          const winnerRawCards = winnerSeat?.participant?.holeCards ?? [];
+          const winnerUiCards = [...winnerRawCards.map(toUiCard), ...nextCommunityCards];
+
+          setWinner((prev) => (prev === winnerLocalId ? prev : winnerLocalId));
+          setWinningCards((prev) => (sameStringArray(prev, winnerUiCards) ? prev : winnerUiCards));
+
+          if (winnerRawCards.length === 2 && game.gameState.boardCards.length >= 3) {
+            const score = bestScore([...winnerRawCards, ...game.gameState.boardCards]);
+            const nextRank = handScoreLabel(score);
+            setWinningHandRank((prev) => (prev === nextRank ? prev : nextRank));
+          }
+        } else if (room.status !== "HAND_ENDED") {
+          setWinner((prev) => (prev === null ? prev : null));
+          setWinningCards((prev) => (prev.length === 0 ? prev : []));
+          setWinningHandRank((prev) => (prev === null ? prev : null));
+        }
+
         if (shouldAnimateDeal && nextPhase === "preflop") {
           setTimeout(() => {
             void syncLiveTable();
@@ -726,6 +764,9 @@ export function PlayTable() {
         setCommunityCards((prev) => (prev.length === 0 ? prev : []));
         setPot((prev) => (prev === 0 ? prev : 0));
         setActiveTurn((prev) => (prev === null ? prev : null));
+        setWinner((prev) => (prev === null ? prev : null));
+        setWinningCards((prev) => (prev.length === 0 ? prev : []));
+        setWinningHandRank((prev) => (prev === null ? prev : null));
       }
 
       if (room.status === "HAND_ENDED") {
@@ -1191,7 +1232,7 @@ export function PlayTable() {
           if (action === "fold") {
             payload.action = "fold";
           } else if (action === "call") {
-            payload.action = "call";
+            payload.action = state.minCallAmount > 0 ? "call" : "check";
           } else {
             const inputAmount = Number.isFinite(amount ?? NaN)
               ? Number(amount)

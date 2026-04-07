@@ -34,4 +34,12 @@ export class UsersService {
 	updateAvatar(userId: string, avatar: AvatarConfig): UserRecord {
 		return this.store.updateUserAvatar(userId, avatar);
 	}
+
+	addBalance(userId: string, amount: number): UserRecord {
+		return this.store.addUserBalance(userId, amount);
+	}
+
+	upgradeToPro(userId: string): UserRecord {
+		return this.store.upgradeUserToPro(userId);
+	}
 }

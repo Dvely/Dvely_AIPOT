@@ -206,13 +206,25 @@ export class GameService {
 		}
 	}
 
+	private async decideBotActionFast(room: RoomRecord, bot: PlayerState) {
+		return Promise.race<{
+			action: ActionType;
+			amount?: number;
+		}>([
+			this.decideBotAction(room, bot),
+			new Promise((resolve) => {
+				setTimeout(() => resolve(this.fallbackBotAction(room, bot)), 1200);
+			}),
+		]);
+	}
+
 	private async processBotTurns(roomId: string): Promise<void> {
-		for (let guard = 0; guard < 12; guard += 1) {
+		for (let guard = 0; guard < 48; guard += 1) {
 			const botTurn = this.getBotTurn(roomId);
 			if (!botTurn) return;
 
 			const { room, bot } = botTurn;
-			let action = await this.decideBotAction(room, bot);
+			let action = await this.decideBotActionFast(room, bot);
 
 			try {
 				this.store.applyPlayerAction({

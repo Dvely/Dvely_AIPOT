@@ -24,6 +24,7 @@ import {
 	AvatarConfig,
 	GameState,
 	HandAction,
+	HandReviewParticipant,
 	HandReviewRecord,
 	LeaderboardEntry,
 	PlayerState,
@@ -234,6 +235,34 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			throw new NotFoundException('사용자를 찾을 수 없습니다.');
 		}
 		user.avatar = { ...avatar };
+		this.markDirty();
+		return user;
+	}
+
+	addUserBalance(userId: string, amount: number): UserRecord {
+		const user = this.users.get(userId);
+		if (!user) {
+			throw new NotFoundException('사용자를 찾을 수 없습니다.');
+		}
+
+		const delta = Math.floor(amount);
+		if (!Number.isFinite(delta) || delta <= 0) {
+			throw new BadRequestException('충전 금액은 1 이상 정수여야 합니다.');
+		}
+
+		user.balanceAmount += delta;
+		this.markDirty();
+		return user;
+	}
+
+	upgradeUserToPro(userId: string): UserRecord {
+		const user = this.users.get(userId);
+		if (!user) {
+			throw new NotFoundException('사용자를 찾을 수 없습니다.');
+		}
+
+		user.role = UserRole.PRO;
+		user.subscriptionActive = true;
 		this.markDirty();
 		return user;
 	}
@@ -1216,6 +1245,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
 		const pot = state.potAmount;
 		const orderedWinners = [...winners].sort((a, b) => a.seatId - b.seatId);
+		state.winnerPlayerIds = orderedWinners.map((winner) => winner.playerId);
 		const share = Math.floor(pot / orderedWinners.length);
 		const remain = pot % orderedWinners.length;
 
@@ -1246,6 +1276,20 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			participantIds: room.seats
 				.map((seat) => seat.participant?.userId)
 				.filter((item): item is string => !!item),
+			participants: room.seats.flatMap((seat): HandReviewParticipant[] => {
+				const participant = seat.participant;
+				if (!participant) return [];
+				return [
+					{
+						seatId: participant.seatId,
+						playerId: participant.playerId,
+						roleType: participant.roleType,
+						userId: participant.userId,
+						displayName: participant.displayName,
+						holeCards: [...participant.holeCards],
+					},
+				];
+			}),
 			boardCards: [...state.boardCards],
 			actions: [...state.actions],
 			winnerPlayerId: orderedWinners[0].playerId,
@@ -1262,7 +1306,6 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		room.seats.forEach((seat) => {
 			if (!seat.participant) return;
 			seat.participant.currentBetAmount = 0;
-			seat.participant.holeCards = [];
 			seat.participant.folded = false;
 			seat.participant.allIn = false;
 		});
@@ -1633,6 +1676,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			actedSeatIds: [],
 			lastAggressiveSeatId: bbSeatId ?? null,
 			maxBetAmount: room.blindBig,
+			winnerPlayerIds: [],
 		};
 	}
 

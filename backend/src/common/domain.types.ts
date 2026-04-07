@@ -104,6 +104,7 @@ export interface GameState {
   actedSeatIds: number[];
   lastAggressiveSeatId: number | null;
   maxBetAmount: number;
+  winnerPlayerIds?: string[];
 }
 
 export interface RoomRecord {
@@ -147,10 +148,20 @@ export interface LeaderboardEntry {
   balanceAmount: number;
 }
 
+export interface HandReviewParticipant {
+  seatId: number;
+  playerId: string;
+  roleType: ParticipantType;
+  userId?: string;
+  displayName: string;
+  holeCards: string[];
+}
+
 export interface HandReviewRecord {
   handId: string;
   roomId: string;
   participantIds: string[];
+  participants?: HandReviewParticipant[];
   boardCards: string[];
   actions: HandAction[];
   winnerPlayerId: string;

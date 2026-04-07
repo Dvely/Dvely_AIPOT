@@ -1,10 +1,25 @@
 import { Injectable } from '@nestjs/common';
-import { ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+	BadRequestException,
+	ForbiddenException,
+	NotFoundException,
+	UnauthorizedException,
+} from '@nestjs/common';
 import { compare, hash } from 'bcrypt';
 import { ChangePasswordDto } from '../auth/dto/change-password.dto';
 import { JwtUserPayload } from '../common/domain.types';
+import { UserRole } from '../common/enums/role.enum';
 import { UsersService } from '../users/users.service';
+import { BuyChipsDto } from './dto/buy-chips.dto';
+import { SubscribeProDto } from './dto/subscribe-pro.dto';
 import { UpdateAvatarDto } from './dto/update-avatar.dto';
+
+const CHIP_PACKAGES: Record<string, { chips: number; priceLabel: string }> = {
+	'chips-50k': { chips: 50_000, priceLabel: '$4.99' },
+	'chips-150k': { chips: 150_000, priceLabel: '$9.99' },
+	'chips-500k': { chips: 500_000, priceLabel: '$19.99' },
+	'chips-2000k': { chips: 2_000_000, priceLabel: '$49.99' },
+};
 
 @Injectable()
 export class ProfileService {
@@ -68,5 +83,48 @@ export class ProfileService {
 		const nextHash = await hash(dto.newPassword, 10);
 		this.usersService.updatePassword(account.id, nextHash);
 		return { success: true };
+	}
+
+	buyChips(user: JwtUserPayload, dto: BuyChipsDto) {
+		const account = this.ensureAccountUser(user);
+		const pkg = CHIP_PACKAGES[dto.packageId];
+		if (!pkg) {
+			throw new BadRequestException('지원하지 않는 결제 패키지입니다.');
+		}
+
+		const updated = this.usersService.addBalance(account.id, pkg.chips);
+		return {
+			success: true,
+			packageId: dto.packageId,
+			addedAmount: pkg.chips,
+			priceLabel: pkg.priceLabel,
+			balanceAmount: updated.balanceAmount,
+			role: updated.role,
+			subscriptionActive: updated.subscriptionActive,
+		};
+	}
+
+	subscribePro(user: JwtUserPayload, dto: SubscribeProDto) {
+		const account = this.ensureAccountUser(user);
+		if (account.role === UserRole.PRO) {
+			return {
+				success: true,
+				alreadySubscribed: true,
+				plan: dto.plan ?? 'monthly',
+				role: account.role,
+				subscriptionActive: account.subscriptionActive,
+				balanceAmount: account.balanceAmount,
+			};
+		}
+
+		const updated = this.usersService.upgradeToPro(account.id);
+		return {
+			success: true,
+			alreadySubscribed: false,
+			plan: dto.plan ?? 'monthly',
+			role: updated.role,
+			subscriptionActive: updated.subscriptionActive,
+			balanceAmount: updated.balanceAmount,
+		};
 	}
 }

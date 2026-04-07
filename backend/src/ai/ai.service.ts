@@ -116,7 +116,7 @@ export class AiService {
 						{ role: 'user', content: options.userPrompt },
 					],
 				},
-				{ headers, timeout: 15000 },
+				{ headers, timeout: 4000 },
 			),
 		);
 
@@ -147,7 +147,7 @@ export class AiService {
 					messages: [{ role: 'user', content: options.userPrompt }],
 				},
 				{
-					timeout: 15000,
+					timeout: 4000,
 					headers: {
 						'Content-Type': 'application/json',
 						'x-api-key': apiKey,
@@ -192,7 +192,7 @@ export class AiService {
 						responseMimeType: 'application/json',
 					},
 				},
-				{ timeout: 15000 },
+				{ timeout: 4000 },
 			),
 		);
 

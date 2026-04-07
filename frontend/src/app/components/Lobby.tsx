@@ -418,7 +418,7 @@ export function Lobby() {
       icon: <BookOpen className="w-8 h-8 text-white" />,
       color: "from-orange-500 to-amber-500",
       description: "Analyze your past games",
-      locked: !isLoggedIn,
+      locked: !isPro,
     },
   ];
 
@@ -458,8 +458,8 @@ export function Lobby() {
 
   const handleGameModeClick = async (id: string) => {
     if (id === "review") {
-      if (!isLoggedIn) {
-        alert("Guest cannot use Hand Review.");
+      if (!isPro) {
+        alert("Hand Review is available for PRO members only.");
         return;
       }
       navigate("/review");

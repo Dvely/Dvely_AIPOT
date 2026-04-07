@@ -82,6 +82,20 @@ function writeSession(session: AuthApiResponse) {
   localStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
 }
 
+export function patchSessionUser(patch: Partial<StoredSessionUser>) {
+  if (!canUseStorage()) return;
+
+  const current = readStoredUser();
+  if (!current) return;
+
+  const next: StoredSessionUser = {
+    ...current,
+    ...patch,
+  };
+
+  localStorage.setItem(SESSION_USER_KEY, JSON.stringify(next));
+}
+
 function clearSession() {
   if (!canUseStorage()) return;
   localStorage.removeItem(ACCESS_TOKEN_KEY);

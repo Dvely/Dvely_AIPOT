@@ -5,6 +5,7 @@ import {
   ArrowLeft, History, PlayCircle, ChevronRight, CheckCircle2, XCircle, BrainCircuit, Target, ShieldAlert, PauseCircle, ChevronLeft, FastForward
 } from "lucide-react";
 import { apiFetch } from "../api";
+import { getCurrentAuth, getCurrentUserId } from "../auth";
 
 // --- MOCK DATA ---
 interface ActionStep {
@@ -47,6 +48,14 @@ interface HandReviewRecord {
   handId: string;
   roomId: string;
   participantIds: string[];
+  participants?: {
+    seatId: number;
+    playerId: string;
+    roleType: "human" | "bot";
+    userId?: string;
+    displayName: string;
+    holeCards: string[];
+  }[];
   boardCards: string[];
   actions: HandReviewAction[];
   winnerPlayerId: string;
@@ -103,11 +112,28 @@ function toHeatMapType(action: string): ActionStep["heatMapType"] {
   return "tight";
 }
 
-function toHandHistory(record: HandReviewRecord): HandHistory {
-  const opponentNames = record.participantIds.map((id, idx) => ({
+function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): HandHistory {
+  const participants = record.participants ?? [];
+  const heroParticipant = viewerUserId
+    ? participants.find((participant) => participant.userId === viewerUserId) ?? null
+    : null;
+  const opponents = participants
+    .filter((participant) => !heroParticipant || participant.playerId !== heroParticipant.playerId)
+    .map((participant) => ({
+      name: participant.displayName,
+      cards: participant.holeCards.map(toUiCard),
+    }));
+
+  const fallbackOpponents = record.participantIds.map((id, idx) => ({
     name: `P${idx + 1}`,
     cards: [] as string[],
   }));
+
+  const resolvedOpponents = opponents.length > 0 ? opponents : fallbackOpponents;
+  const heroCards = heroParticipant?.holeCards?.map(toUiCard) ?? [];
+  const winnerLabel =
+    participants.find((participant) => participant.playerId === record.winnerPlayerId)
+      ?.displayName ?? record.winnerPlayerId.slice(0, 8);
 
   const steps: ActionStep[] = record.actions
     .sort((a, b) => a.order - b.order)
@@ -123,8 +149,8 @@ function toHandHistory(record: HandReviewRecord): HandHistory {
         desc: `${actionName}${amountText}`,
         pot: action.potAfter,
         board: toBoardByStreet(record.boardCards, action.street),
-        heroCards: [],
-        opponents: opponentNames,
+        heroCards,
+        opponents: resolvedOpponents,
         analysis: `Live action replay from room ${record.roomId.slice(0, 8)}.`,
         evScore: 0,
         heroEquity: 50,
@@ -136,11 +162,11 @@ function toHandHistory(record: HandReviewRecord): HandHistory {
     id: steps.length + 1,
     player: "System",
     street: "Showdown",
-    desc: `Winner ${record.winnerPlayerId.slice(0, 8)} wins $${record.resultPot.toLocaleString()}`,
+    desc: `Winner ${winnerLabel} wins $${record.resultPot.toLocaleString()}`,
     pot: record.resultPot,
     board: record.boardCards.map(toUiCard),
-    heroCards: [],
-    opponents: opponentNames,
+    heroCards,
+    opponents: resolvedOpponents,
     analysis: "Showdown completed from real game data.",
     evScore: 0,
     heroEquity: 100,
@@ -207,6 +233,8 @@ function getHeatMapColor(rIdx: number, cIdx: number, type: ActionStep['heatMapTy
 
 export function HandReview() {
   const navigate = useNavigate();
+  const { isLoggedIn, isPro } = getCurrentAuth();
+  const viewerUserId = getCurrentUserId();
   const [hands, setHands] = useState<HandHistory[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -216,13 +244,20 @@ export function HandReview() {
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (!isPro) {
+      setHands([]);
+      setLoading(false);
+      setErrorMessage("");
+      return;
+    }
+
     const loadHands = async () => {
       setLoading(true);
       try {
         const list = await apiFetch<HandReviewRecord[]>("/hand-review/hands");
         const mapped = list
           .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-          .map(toHandHistory);
+          .map((record) => toHandHistory(record, viewerUserId));
         setHands(mapped);
         setErrorMessage("");
       } catch (error) {
@@ -234,7 +269,45 @@ export function HandReview() {
     };
 
     void loadHands();
-  }, []);
+  }, [isPro, viewerUserId]);
+
+  if (!isPro) {
+    return (
+      <div className="flex flex-col w-full h-full bg-[#11122D] font-sans text-white relative overflow-hidden">
+        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10 pointer-events-none" />
+        <header className="relative z-10 flex items-center p-4 md:p-6 border-b border-white/5 bg-[#1A1C3E]">
+          <button
+            onClick={() => navigate("/lobby")}
+            className="flex items-center gap-2 text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 px-4 py-2 rounded-full font-bold transition"
+          >
+            <ArrowLeft className="w-5 h-5" /> Back to Lobby
+          </button>
+        </header>
+        <div className="flex-1 flex items-center justify-center p-6 z-10">
+          <div className="max-w-xl w-full rounded-2xl border border-orange-500/40 bg-orange-500/10 p-6 text-center">
+            <h2 className="text-2xl font-black text-white mb-2">Hand Review is PRO Only</h2>
+            <p className="text-slate-300 font-semibold mb-6">
+              {isLoggedIn ? "핸드 리플레이와 분석은 PRO 구독에서만 사용할 수 있습니다." : "로그인 후 PRO 구독이 필요합니다."}
+            </p>
+            <div className="flex justify-center gap-3">
+              <button
+                onClick={() => navigate("/store")}
+                className="bg-orange-500 hover:bg-orange-400 text-white font-black px-5 py-2.5 rounded-xl"
+              >
+                Go to Store
+              </button>
+              <button
+                onClick={() => navigate("/lobby")}
+                className="bg-slate-700 hover:bg-slate-600 text-white font-black px-5 py-2.5 rounded-xl"
+              >
+                Back
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Auto-play logic
   useEffect(() => {

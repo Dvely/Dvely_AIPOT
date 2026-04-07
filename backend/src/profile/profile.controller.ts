@@ -15,6 +15,8 @@ import { ChangePasswordDto } from '../auth/dto/change-password.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtUserPayload } from '../common/domain.types';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { BuyChipsDto } from './dto/buy-chips.dto';
+import { SubscribeProDto } from './dto/subscribe-pro.dto';
 import { UpdateAvatarDto } from './dto/update-avatar.dto';
 import { ProfileService } from './profile.service';
 
@@ -50,5 +52,20 @@ export class ProfileController {
 		@Body() dto: ChangePasswordDto,
 	) {
 		return this.profileService.updatePassword(user, dto);
+	}
+
+	@Post('store/chips')
+	@ApiOperation({ summary: '가상결제로 칩 구매' })
+	buyChips(@CurrentUser() user: JwtUserPayload, @Body() dto: BuyChipsDto) {
+		return this.profileService.buyChips(user, dto);
+	}
+
+	@Post('store/subscribe-pro')
+	@ApiOperation({ summary: '가상결제로 PRO 구독' })
+	subscribePro(
+		@CurrentUser() user: JwtUserPayload,
+		@Body() dto: SubscribeProDto,
+	) {
+		return this.profileService.subscribePro(user, dto);
 	}
 }

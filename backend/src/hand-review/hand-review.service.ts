@@ -4,6 +4,7 @@ import { AiService } from '../ai/ai.service';
 import { JwtUserPayload } from '../common/domain.types';
 import { UserRole } from '../common/enums/role.enum';
 import { StoreService } from '../store/store.service';
+import { UsersService } from '../users/users.service';
 import { AnalyzeHandDto } from './dto/analyze-hand.dto';
 
 @Injectable()
@@ -11,11 +12,17 @@ export class HandReviewService {
 	constructor(
 		private readonly store: StoreService,
 		private readonly aiService: AiService,
+		private readonly usersService: UsersService,
 	) {}
 
 	private assertCanRead(user: JwtUserPayload) {
-		if (user.role === UserRole.GUEST) {
+		if (user.guest || user.role === UserRole.GUEST) {
 			throw new ForbiddenException('Guest는 Hand Review를 사용할 수 없습니다.');
+		}
+
+		const account = this.usersService.findById(user.sub);
+		if (!account || account.role !== UserRole.PRO) {
+			throw new ForbiddenException('Hand Review는 PRO 권한이 필요합니다.');
 		}
 	}
 
@@ -31,9 +38,6 @@ export class HandReviewService {
 
 	async analyze(user: JwtUserPayload, handId: string, dto: AnalyzeHandDto) {
 		this.assertCanRead(user);
-		if (user.role !== UserRole.PRO) {
-			throw new ForbiddenException('Hand Review 심화 분석은 PRO 권한이 필요합니다.');
-		}
 
 		const hand = this.store.getHandReview(handId, user.sub);
 

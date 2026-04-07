@@ -44,6 +44,15 @@ export class RoomsService {
 		};
 	}
 
+	private isProUser(user: JwtUserPayload) {
+		if (user.guest) return false;
+		const account = this.usersService.findById(user.sub);
+		if (!account) {
+			throw new NotFoundException('사용자 계정을 찾을 수 없습니다.');
+		}
+		return account.role === UserRole.PRO;
+	}
+
 	createRoom(user: JwtUserPayload, dto: CreateRoomDto) {
 		if (user.role === UserRole.GUEST) {
 			throw new ForbiddenException('Guest는 Create Table을 사용할 수 없습니다.');
@@ -197,7 +206,7 @@ export class RoomsService {
 	}
 
 	addBot(user: JwtUserPayload, roomId: string, seatId: number, dto: AddBotDto) {
-		if (dto.modelTier === 'paid' && user.role !== UserRole.PRO) {
+		if (dto.modelTier === 'paid' && !this.isProUser(user)) {
 			throw new ForbiddenException('PRO 권한만 유료 AI 모델을 사용할 수 있습니다.');
 		}
 		return this.store.addBot({
@@ -218,7 +227,7 @@ export class RoomsService {
 		const currentBot = room.seats.find((seat) => seat.seatId === seatId)?.participant?.botConfig;
 		const nextModelTier =
 			dto.modelTier ?? currentBot?.modelTier ?? BotModelTier.FREE;
-		if (nextModelTier === 'paid' && user.role !== UserRole.PRO) {
+		if (nextModelTier === 'paid' && !this.isProUser(user)) {
 			throw new ForbiddenException('PRO 권한만 유료 AI 모델을 사용할 수 있습니다.');
 		}
 
