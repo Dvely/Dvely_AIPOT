@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AiService } from '../ai/ai.service';
 import { JwtUserPayload, PlayerState, RoomRecord } from '../common/domain.types';
-import { ActionType, ParticipantType, RoomStatus } from '../common/enums/room.enum';
+import { ActionType, HandStreet, ParticipantType, RoomStatus } from '../common/enums/room.enum';
 import { UserRole } from '../common/enums/role.enum';
 import { StoreService } from '../store/store.service';
 import { ActDto } from './dto/act.dto';
@@ -249,8 +249,14 @@ export class GameService {
 		this.store.autoResolveTimeout(roomId);
 		await this.processBotTurns(roomId);
 		const room = this.store.autoResolveTimeout(roomId);
+		const latestAction = room.gameState?.actions.at(-1);
+		const endedByFold =
+			room.status === RoomStatus.HAND_ENDED &&
+			room.gameState?.street === HandStreet.RESULT &&
+			latestAction?.action === ActionType.FOLD;
 		const revealAllCards =
-			room.status === RoomStatus.SHOWDOWN || room.status === RoomStatus.HAND_ENDED;
+			room.status === RoomStatus.SHOWDOWN ||
+			(room.status === RoomStatus.HAND_ENDED && !endedByFold);
 
 		const seats = room.seats.map((seat) => {
 			if (!seat.participant) return seat;
