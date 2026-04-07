@@ -6,6 +6,9 @@ import { UserRole } from '../common/enums/role.enum';
 import { StoreService } from '../store/store.service';
 import { ActDto } from './dto/act.dto';
 
+const BOT_TURN_TIMEOUT_MS = 15_000;
+const BOT_THINK_DELAY_MS = 1_200;
+
 @Injectable()
 export class GameService {
 	constructor(
@@ -218,30 +221,40 @@ export class GameService {
 		]);
 	}
 
+	private shouldProcessBotTurnNow(state: NonNullable<RoomRecord['gameState']>): boolean {
+		if (!state.actionTimerDeadline) return true;
+
+		const deadlineMs = Date.parse(state.actionTimerDeadline);
+		if (!Number.isFinite(deadlineMs)) return true;
+
+		const turnStartedAtMs = deadlineMs - BOT_TURN_TIMEOUT_MS;
+		return Date.now() - turnStartedAtMs >= BOT_THINK_DELAY_MS;
+	}
+
 	private async processBotTurns(roomId: string): Promise<void> {
-		for (let guard = 0; guard < 48; guard += 1) {
-			const botTurn = this.getBotTurn(roomId);
-			if (!botTurn) return;
+		const botTurn = this.getBotTurn(roomId);
+		if (!botTurn) return;
 
-			const { room, bot } = botTurn;
-			let action = await this.decideBotActionFast(room, bot);
+		const { room, state, bot } = botTurn;
+		if (!this.shouldProcessBotTurnNow(state)) return;
 
-			try {
-				this.store.applyPlayerAction({
-					roomId,
-					actorSeatId: bot.seatId,
-					action: action.action,
-					amount: action.amount,
-				});
-			} catch {
-				action = this.fallbackBotAction(room, bot);
-				this.store.applyPlayerAction({
-					roomId,
-					actorSeatId: bot.seatId,
-					action: action.action,
-					amount: action.amount,
-				});
-			}
+		let action = await this.decideBotActionFast(room, bot);
+
+		try {
+			this.store.applyPlayerAction({
+				roomId,
+				actorSeatId: bot.seatId,
+				action: action.action,
+				amount: action.amount,
+			});
+		} catch {
+			action = this.fallbackBotAction(room, bot);
+			this.store.applyPlayerAction({
+				roomId,
+				actorSeatId: bot.seatId,
+				action: action.action,
+				amount: action.amount,
+			});
 		}
 	}
 

@@ -48,7 +48,7 @@ const DEFAULT_AVATAR: AvatarConfig = {
 
 const DEFAULT_ACCOUNT_BALANCE = 10000;
 const DEFAULT_GUEST_BALANCE = 1000;
-const PRIVATE_AI_BOT_NEXT_HAND_DELAY_MS = 8000;
+const PRIVATE_AI_BOT_NEXT_HAND_DELAY_MS = 2500;
 
 @Injectable()
 export class StoreService implements OnModuleInit, OnModuleDestroy {
@@ -337,7 +337,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			return false;
 		}
 
-		if (room.isPrivate) {
+		if (room.isPrivate && room.type !== RoomType.AI_BOT) {
 			return false;
 		}
 
@@ -1338,6 +1338,17 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			seat.participant.folded = false;
 			seat.participant.allIn = false;
 		});
+
+		if (room.type === RoomType.AI_BOT) {
+			room.seats.forEach((seat) => {
+				const participant = seat.participant;
+				if (!participant) return;
+				if (participant.stackAmount <= 0) {
+					seat.participant = null;
+				}
+			});
+		}
+
 		this.markDirty();
 	}
 

@@ -10,7 +10,7 @@ import { BotActionRequestDto } from './dto/bot-action-request.dto';
 import { HandReviewRequestDto } from './dto/hand-review-request.dto';
 
 const BOT_PROVIDER_TIMEOUT_MS = 4000;
-const REVIEW_PROVIDER_TIMEOUT_MS = 20000;
+const REVIEW_PROVIDER_TIMEOUT_MS = 10000;
 
 @Injectable()
 export class AiService {
