@@ -23,6 +23,7 @@ import { UserRole } from '../common/enums/role.enum';
 import {
 	AvatarConfig,
 	GameState,
+	HandActionAnalysis,
 	HandAction,
 	HandReviewParticipant,
 	HandReviewRecord,
@@ -509,6 +510,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			blindBig,
 			seats: this.createEmptySeats(maxSeats),
 			gameState: null,
+			lastDealerSeatId: null,
 			createdAt: new Date().toISOString(),
 		};
 
@@ -770,6 +772,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		config: NonNullable<PlayerState['botConfig']>;
 	}): RoomRecord {
 		const room = this.ensureRoom(params.roomId);
+		if (room.type !== RoomType.AI_BOT) {
+			throw new BadRequestException('AI Bot 타입 룸에서만 봇을 추가할 수 있습니다.');
+		}
 		this.assertHostControlAllowed(room, params.actorUserId);
 		this.assertRoomEditable(room);
 
@@ -1308,6 +1313,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			actions: [...state.actions],
 			winnerPlayerId: orderedWinners[0].playerId,
 			resultPot: pot,
+			analyses: [],
+			favoriteUserIds: [],
 			createdAt: new Date().toISOString(),
 		};
 		this.handReviews.set(review.handId, review);
@@ -1557,8 +1564,18 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 	}
 
 	listHandReviews(userId: string): HandReviewRecord[] {
-		return Array.from(this.handReviews.values()).filter((review) =>
-			review.participantIds.includes(userId),
+		return Array.from(this.handReviews.values())
+			.filter((review) => review.participantIds.includes(userId))
+			.map((review) => ({
+				...review,
+				analyses: review.analyses ?? [],
+				favoriteUserIds: review.favoriteUserIds ?? [],
+			}));
+	}
+
+	listFavoriteHandReviews(userId: string): HandReviewRecord[] {
+		return this.listHandReviews(userId).filter((review) =>
+			(review.favoriteUserIds ?? []).includes(userId),
 		);
 	}
 
@@ -1570,7 +1587,78 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		if (!review.participantIds.includes(userId)) {
 			throw new BadRequestException('해당 핸드에 대한 접근 권한이 없습니다.');
 		}
+		return {
+			...review,
+			analyses: review.analyses ?? [],
+			favoriteUserIds: review.favoriteUserIds ?? [],
+		};
+	}
+
+	setHandReviewFavorite(handId: string, userId: string, favorite: boolean): HandReviewRecord {
+		const review = this.handReviews.get(handId);
+		if (!review) {
+			throw new NotFoundException('핸드 리뷰를 찾을 수 없습니다.');
+		}
+		if (!review.participantIds.includes(userId)) {
+			throw new BadRequestException('해당 핸드에 대한 접근 권한이 없습니다.');
+		}
+
+		const current = new Set(review.favoriteUserIds ?? []);
+		if (favorite) {
+			current.add(userId);
+		} else {
+			current.delete(userId);
+		}
+
+		review.favoriteUserIds = Array.from(current);
+		this.handReviews.set(handId, review);
+		this.markDirty();
 		return review;
+	}
+
+	addHandActionAnalysis(params: {
+		handId: string;
+		userId: string;
+		actionOrder: number;
+		provider: LlmProvider;
+		model: string;
+		analysis: string;
+	}): HandActionAnalysis {
+		const review = this.handReviews.get(params.handId);
+		if (!review) {
+			throw new NotFoundException('핸드 리뷰를 찾을 수 없습니다.');
+		}
+		if (!review.participantIds.includes(params.userId)) {
+			throw new BadRequestException('해당 핸드에 대한 접근 권한이 없습니다.');
+		}
+
+		const targetAction = review.actions.find(
+			(action) => action.order === params.actionOrder,
+		);
+		if (!targetAction) {
+			throw new NotFoundException('분석할 액션 로그를 찾을 수 없습니다.');
+		}
+
+		const record: HandActionAnalysis = {
+			id: randomUUID(),
+			handId: params.handId,
+			actionOrder: targetAction.order,
+			seatId: targetAction.seatId,
+			playerId: targetAction.playerId,
+			street: targetAction.street,
+			provider: params.provider,
+			model: params.model,
+			analysis: params.analysis,
+			createdByUserId: params.userId,
+			createdAt: new Date().toISOString(),
+		};
+
+		const analyses = review.analyses ?? [];
+		analyses.push(record);
+		review.analyses = analyses;
+		this.handReviews.set(params.handId, review);
+		this.markDirty();
+		return record;
 	}
 
 	private createDeck(): string[] {
@@ -1629,10 +1717,11 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		const deck = this.createDeck();
 		const sorted = [...seatedSeatIds].sort((a, b) => a - b);
 
-		const prevDealer = room.gameState?.dealerSeatId;
+		const prevDealer = room.lastDealerSeatId ?? room.gameState?.dealerSeatId;
 		const dealerSeatId = prevDealer
 			? this.nextSeatFromList(sorted, prevDealer)
 			: sorted[0];
+		room.lastDealerSeatId = dealerSeatId;
 
 		sorted.forEach((seatId) => {
 			const seat = this.ensureSeat(room, seatId);

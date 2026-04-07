@@ -558,6 +558,7 @@ export function PlayTable() {
   const [liveRoom, setLiveRoom] = useState<LiveRoom | null>(null);
   const [liveGame, setLiveGame] = useState<LiveGameSnapshot | null>(null);
   const [heroSeatId, setHeroSeatId] = useState<number | null>(null);
+  const [pendingHeroAction, setPendingHeroAction] = useState(false);
   const [liveBusy, setLiveBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [botModelId, setBotModelId] = useState<string>("local-qwen");
@@ -588,6 +589,7 @@ export function PlayTable() {
         ? "tournament"
         : null;
   const roomMode = liveRoom?.type ?? inferredMode;
+  const canAddBotToRoom = roomMode === "ai_bot";
   const canConvertToPublic = Boolean(isLiveMode && canManageLiveRoom && liveRoom?.isPrivate && !liveRoom?.hasBeenPublic);
   const tableModeLabel = roomMode === "ai_bot"
     ? "AI Bot Game"
@@ -604,7 +606,8 @@ export function PlayTable() {
   const isHeroLiveTurn = Boolean(
     isLiveMode &&
     heroSeatId !== null &&
-    liveGame?.gameState?.currentTurnSeatId === heroSeatId,
+    liveGame?.gameState?.currentTurnSeatId === heroSeatId &&
+    !pendingHeroAction,
   );
   const isHeroActionTurn = userState === "playing" && (isLiveMode ? isHeroLiveTurn : activeTurn === "hero");
   const liveLatestAction = liveGame?.gameState?.actions?.[liveGame.gameState.actions.length - 1];
@@ -629,6 +632,18 @@ export function PlayTable() {
   useEffect(() => {
     showdownHoldUntilRef.current = showdownHoldUntil;
   }, [showdownHoldUntil]);
+
+  useEffect(() => {
+    if (!isLiveMode) {
+      setPendingHeroAction(false);
+      return;
+    }
+
+    const nextTurnSeatId = liveGame?.gameState?.currentTurnSeatId ?? null;
+    if (heroSeatId !== null && nextTurnSeatId !== heroSeatId) {
+      setPendingHeroAction(false);
+    }
+  }, [isLiveMode, heroSeatId, liveGame?.gameState?.currentTurnSeatId]);
 
   useEffect(() => {
     if (showdownHoldUntil <= 0) return;
@@ -895,6 +910,11 @@ export function PlayTable() {
     setBotModelId("local-qwen");
     setBotStyle("balanced");
   }, [selectedSeat]);
+
+  useEffect(() => {
+    if (canAddBotToRoom || selectedSeat === null) return;
+    setSelectedSeat(null);
+  }, [canAddBotToRoom, selectedSeat]);
 
   useEffect(() => {
     if (!isLiveMode) return;
@@ -1329,17 +1349,20 @@ export function PlayTable() {
 
       const sendLiveAction = async () => {
         setActionBusy(true);
+        setPendingHeroAction(true);
         try {
           const latest = await apiFetch<LiveGameSnapshot>(`/game/rooms/${roomId}/state`);
           const state = latest.gameState;
           if (!state || heroSeatId === null) {
             setLog("게임 상태를 동기화 중입니다...");
             await syncLiveTable();
+            setPendingHeroAction(false);
             return;
           }
           if (state.currentTurnSeatId !== heroSeatId) {
             setLog("이미 턴이 넘어갔습니다. 상태를 동기화합니다.");
             await syncLiveTable();
+            setPendingHeroAction(false);
             return;
           }
 
@@ -1357,6 +1380,7 @@ export function PlayTable() {
               : Number(raiseAmount);
             if (!Number.isFinite(inputAmount) || inputAmount <= 0) {
               alert("유효한 레이즈 금액을 입력해 주세요.");
+              setPendingHeroAction(false);
               return;
             }
 
@@ -1380,6 +1404,7 @@ export function PlayTable() {
           setIsRaising(false);
           setRaiseAmount("");
           await syncLiveTable();
+          setPendingHeroAction(false);
           setTimeout(() => {
             void syncLiveTable();
           }, 180);
@@ -1387,6 +1412,7 @@ export function PlayTable() {
             void syncLiveTable();
           }, 420);
         } catch (error) {
+          setPendingHeroAction(false);
           alert(error instanceof Error ? error.message : "액션 처리에 실패했습니다.");
         } finally {
           setLiveBusy(false);
@@ -1795,7 +1821,7 @@ export function PlayTable() {
       {!isTournament && (!isLiveMode || canManageLiveRoom) && Array.from({ length: tableSeatCount }).map((_, i) => {
         if (players.find(p => p.pos === i)) return null;
         if (phase !== "init" && phase !== "showdown") return null; // Only allow adding between hands
-        const canAddBotHere = !isLiveMode || canManageLiveRoom;
+        const canAddBotHere = canAddBotToRoom && (!isLiveMode || canManageLiveRoom);
         if (!canAddBotHere) return null;
 
         return (
@@ -1818,14 +1844,18 @@ export function PlayTable() {
       {/* Render Players */}
       {players.map((p) => {
         const isPlayerTurn = isLiveMode
-          ? Boolean(p.seatId !== undefined && liveGame?.gameState?.currentTurnSeatId === p.seatId)
+          ? Boolean(
+            p.seatId !== undefined &&
+            liveGame?.gameState?.currentTurnSeatId === p.seatId &&
+            !(pendingHeroAction && p.id === "hero"),
+          )
           : activeTurn === p.id;
         const isTimerActive = isPlayerTurn;
 
         return (
         <div key={p.id} className={`absolute flex flex-col items-center z-30 transition-all ${p.id === 'hero' && userState !== 'playing' ? 'opacity-40 grayscale sepia' : ''}`} style={getPlayerPosStyle(p.pos, tableSeatCount)}>
           
-          <div className={`absolute z-20 ${p.id === 'hero' ? 'translate-x-8 -translate-y-8 md:translate-x-12 md:-translate-y-12' : ''}`} style={getBetPosStyle(p.pos, tableSeatCount)}>
+          <div className={`absolute z-20 ${p.id === 'hero' ? 'translate-x-14 -translate-y-8 md:translate-x-20 md:-translate-y-12' : ''}`} style={getBetPosStyle(p.pos, tableSeatCount)}>
             <ChipStack amount={p.bet} />
           </div>
 
@@ -2103,7 +2133,7 @@ export function PlayTable() {
 
       {/* Bot Addition Modal */}
       <AnimatePresence>
-        {selectedSeat !== null && (
+        {selectedSeat !== null && canAddBotToRoom && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
             <motion.div 
               initial={{ scale: 0.9, y: 20 }}

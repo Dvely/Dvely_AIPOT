@@ -121,6 +121,7 @@ export interface RoomRecord {
   blindBig: number;
   seats: SeatState[];
   gameState: GameState | null;
+  lastDealerSeatId?: number | null;
   createdAt: string;
 }
 
@@ -166,6 +167,22 @@ export interface HandReviewRecord {
   actions: HandAction[];
   winnerPlayerId: string;
   resultPot: number;
+  analyses?: HandActionAnalysis[];
+  favoriteUserIds?: string[];
+  createdAt: string;
+}
+
+export interface HandActionAnalysis {
+  id: string;
+  handId: string;
+  actionOrder: number;
+  seatId: number;
+  playerId: string;
+  street: HandStreet;
+  provider: LlmProvider;
+  model: string;
+  analysis: string;
+  createdByUserId: string;
   createdAt: string;
 }
 

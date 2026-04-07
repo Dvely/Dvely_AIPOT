@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  ArrowLeft, History, PlayCircle, ChevronRight, CheckCircle2, XCircle, BrainCircuit, Target, ShieldAlert, PauseCircle, ChevronLeft, FastForward
+  ArrowLeft, History, PlayCircle, ChevronRight, CheckCircle2, XCircle, BrainCircuit, Target, ShieldAlert, PauseCircle, ChevronLeft, Star
 } from "lucide-react";
 import { apiFetch } from "../api";
 import { getCurrentAuth, getCurrentUserId } from "../auth";
@@ -10,7 +10,11 @@ import { getCurrentAuth, getCurrentUserId } from "../auth";
 // --- MOCK DATA ---
 interface ActionStep {
   id: number;
+  order: number | null;
+  seatId: number | null;
+  playerId: string;
   player: string;
+  isHeroAction: boolean;
   street: "Preflop" | "Flop" | "Turn" | "River" | "Showdown";
   desc: string;
   pot: number;
@@ -29,7 +33,31 @@ interface HandHistory {
   title: string;
   stakes: string;
   net: number;
+  favorite: boolean;
   steps: ActionStep[];
+}
+
+interface HandActionAnalysisRecord {
+  id: string;
+  handId: string;
+  actionOrder: number;
+  seatId: number;
+  playerId: string;
+  street: string;
+  provider: "local" | "openai" | "claude" | "gemini";
+  model: string;
+  analysis: string;
+  createdByUserId: string;
+  createdAt: string;
+}
+
+interface ActionAnalysisResponse {
+  handId: string;
+  actionOrder: number;
+  provider: "local" | "openai" | "claude" | "gemini";
+  model: string;
+  analysis: string;
+  createdAt: string;
 }
 
 interface HandReviewAction {
@@ -60,6 +88,8 @@ interface HandReviewRecord {
   actions: HandReviewAction[];
   winnerPlayerId: string;
   resultPot: number;
+  analyses?: HandActionAnalysisRecord[];
+  favoriteUserIds?: string[];
   createdAt: string;
 }
 
@@ -114,9 +144,23 @@ function toHeatMapType(action: string): ActionStep["heatMapType"] {
 
 function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): HandHistory {
   const participants = record.participants ?? [];
+  const analyses = record.analyses ?? [];
   const heroParticipant = viewerUserId
     ? participants.find((participant) => participant.userId === viewerUserId) ?? null
     : null;
+  const latestAnalysisByOrder = new Map<number, HandActionAnalysisRecord>();
+  for (const item of analyses) {
+    const prev = latestAnalysisByOrder.get(item.actionOrder);
+    if (!prev || new Date(item.createdAt).getTime() >= new Date(prev.createdAt).getTime()) {
+      latestAnalysisByOrder.set(item.actionOrder, item);
+    }
+  }
+
+  const participantBySeat = new Map<number, NonNullable<HandReviewRecord["participants"]>[number]>();
+  for (const participant of participants) {
+    participantBySeat.set(participant.seatId, participant);
+  }
+
   const opponents = participants
     .filter((participant) => !heroParticipant || participant.playerId !== heroParticipant.playerId)
     .map((participant) => ({
@@ -141,17 +185,27 @@ function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): H
       const street = toReviewStreet(action.street);
       const actionName = action.action.toUpperCase();
       const amountText = action.amount > 0 ? ` $${action.amount.toLocaleString()}` : "";
+      const actionOwner = participantBySeat.get(action.seatId);
+      const latestAnalysis = latestAnalysisByOrder.get(action.order);
+      const displayName = actionOwner?.displayName ?? `Seat ${action.seatId}`;
+      const isHeroAction = Boolean(heroParticipant && action.playerId === heroParticipant.playerId);
 
       return {
         id: action.order,
-        player: `Seat ${action.seatId}`,
+        order: action.order,
+        seatId: action.seatId,
+        playerId: action.playerId,
+        player: displayName,
+        isHeroAction,
         street,
         desc: `${actionName}${amountText}`,
         pot: action.potAfter,
         board: toBoardByStreet(record.boardCards, action.street),
         heroCards,
         opponents: resolvedOpponents,
-        analysis: `Live action replay from room ${record.roomId.slice(0, 8)}.`,
+        analysis:
+          latestAnalysis?.analysis ??
+          `Live action replay from room ${record.roomId.slice(0, 8)}.`,
         evScore: 0,
         heroEquity: 50,
         heatMapType: toHeatMapType(action.action),
@@ -160,7 +214,11 @@ function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): H
 
   steps.push({
     id: steps.length + 1,
+    order: null,
+    seatId: null,
+    playerId: "system",
     player: "System",
+    isHeroAction: false,
     street: "Showdown",
     desc: `Winner ${winnerLabel} wins $${record.resultPot.toLocaleString()}`,
     pot: record.resultPot,
@@ -179,6 +237,7 @@ function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): H
     title: `Hand #${record.handId.slice(0, 8)}`,
     stakes: "LIVE",
     net: record.resultPot,
+    favorite: Boolean(viewerUserId && (record.favoriteUserIds ?? []).includes(viewerUserId)),
     steps,
   };
 }
@@ -231,6 +290,25 @@ function getHeatMapColor(rIdx: number, cIdx: number, type: ActionStep['heatMapTy
   return "bg-slate-800 text-slate-600";
 }
 
+type AnalysisProvider = "local" | "openai" | "claude" | "gemini";
+
+const ANALYSIS_MODELS: Record<AnalysisProvider, Array<{ label: string; value: string }>> = {
+  local: [
+    { label: "Qwen 2.5 Coder", value: "qwen2.5-coder:3b" },
+    { label: "EXAONE Deep", value: "exaone-deep:2.4b" },
+  ],
+  openai: [
+    { label: "GPT-4.1 mini", value: "gpt-4.1-mini" },
+    { label: "GPT-4.1", value: "gpt-4.1" },
+  ],
+  claude: [
+    { label: "Claude 3.5 Sonnet", value: "claude-3-5-sonnet-latest" },
+  ],
+  gemini: [
+    { label: "Gemini 1.5 Pro", value: "gemini-1.5-pro" },
+  ],
+};
+
 export function HandReview() {
   const navigate = useNavigate();
   const { isLoggedIn, isPro } = getCurrentAuth();
@@ -241,6 +319,12 @@ export function HandReview() {
   const [selectedHand, setSelectedHand] = useState<HandHistory | null>(null);
   const [stepIdx, setStepIdx] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<"all" | "favorites">("all");
+  const [analysisProvider, setAnalysisProvider] = useState<AnalysisProvider>("local");
+  const [analysisModel, setAnalysisModel] = useState(ANALYSIS_MODELS.local[0].value);
+  const [analysisBusyOrder, setAnalysisBusyOrder] = useState<number | null>(null);
+  const [analysisError, setAnalysisError] = useState("");
+  const [stepAnalysisMap, setStepAnalysisMap] = useState<Record<number, string>>({});
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -270,6 +354,118 @@ export function HandReview() {
 
     void loadHands();
   }, [isPro, viewerUserId]);
+
+  useEffect(() => {
+    const available = ANALYSIS_MODELS[analysisProvider];
+    if (available.some((item) => item.value === analysisModel)) return;
+    setAnalysisModel(available[0]?.value ?? "");
+  }, [analysisProvider, analysisModel]);
+
+  useEffect(() => {
+    if (!selectedHand) {
+      setStepAnalysisMap({});
+      return;
+    }
+
+    const map: Record<number, string> = {};
+    for (const step of selectedHand.steps) {
+      if (step.order === null) continue;
+      map[step.order] = step.analysis;
+    }
+    setStepAnalysisMap(map);
+  }, [selectedHand?.id]);
+
+  const toggleFavorite = async (handId: string, nextFavorite: boolean) => {
+    try {
+      await apiFetch<{ handId: string; favorite: boolean }>(`/hand-review/hands/${handId}/favorite`, {
+        method: "POST",
+        body: JSON.stringify({ favorite: nextFavorite }),
+      });
+
+      setHands((prev) =>
+        prev.map((hand) =>
+          hand.id === handId
+            ? {
+                ...hand,
+                favorite: nextFavorite,
+              }
+            : hand,
+        ),
+      );
+      setSelectedHand((prev) =>
+        prev && prev.id === handId
+          ? {
+              ...prev,
+              favorite: nextFavorite,
+            }
+          : prev,
+      );
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "즐겨찾기 저장에 실패했습니다.");
+    }
+  };
+
+  const analyzeActionStep = async (order: number) => {
+    if (!selectedHand || analysisBusyOrder !== null) return;
+
+    setAnalysisBusyOrder(order);
+    setAnalysisError("");
+    try {
+      const response = await apiFetch<ActionAnalysisResponse>(
+        `/hand-review/hands/${selectedHand.id}/actions/${order}/analyze`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            provider: analysisProvider,
+            model: analysisModel,
+            includePremiumAnalysis: true,
+          }),
+        },
+      );
+
+      setStepAnalysisMap((prev) => ({
+        ...prev,
+        [order]: response.analysis,
+      }));
+
+      setSelectedHand((prev) => {
+        if (!prev || prev.id !== response.handId) return prev;
+        return {
+          ...prev,
+          steps: prev.steps.map((step) =>
+            step.order === order
+              ? {
+                  ...step,
+                  analysis: response.analysis,
+                }
+              : step,
+          ),
+        };
+      });
+
+      setHands((prev) =>
+        prev.map((hand) =>
+          hand.id !== response.handId
+            ? hand
+            : {
+                ...hand,
+                steps: hand.steps.map((step) =>
+                  step.order === order
+                    ? {
+                        ...step,
+                        analysis: response.analysis,
+                      }
+                    : step,
+                ),
+              },
+        ),
+      );
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : "액션 분석에 실패했습니다.");
+    } finally {
+      setAnalysisBusyOrder(null);
+    }
+  };
 
   if (!isPro) {
     return (
@@ -334,6 +530,10 @@ export function HandReview() {
 
   // --- List View ---
   if (!selectedHand) {
+    const visibleHands = historyFilter === "favorites"
+      ? hands.filter((hand) => hand.favorite)
+      : hands;
+
     return (
       <div className="flex flex-col w-full h-full bg-[#11122D] font-sans text-white relative overflow-hidden">
         <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10 pointer-events-none" />
@@ -354,27 +554,55 @@ export function HandReview() {
 
         <div className="flex-1 overflow-y-auto p-4 md:p-8 z-10">
           <div className="max-w-3xl mx-auto flex flex-col gap-4">
-            <p className="text-slate-400 font-bold mb-2">Select a hand to review play-by-play.</p>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-slate-400 font-bold">Select a hand to review play-by-play.</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setHistoryFilter("all")}
+                  className={`px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-wider border transition ${historyFilter === "all" ? "bg-cyan-500/20 text-cyan-300 border-cyan-400/50" : "bg-white/5 text-slate-400 border-white/10 hover:text-white"}`}
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => setHistoryFilter("favorites")}
+                  className={`px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-wider border transition ${historyFilter === "favorites" ? "bg-yellow-500/20 text-yellow-300 border-yellow-400/50" : "bg-white/5 text-slate-400 border-white/10 hover:text-white"}`}
+                >
+                  Favorites
+                </button>
+              </div>
+            </div>
             {loading && <p className="text-slate-300 font-semibold">Loading hands...</p>}
             {!loading && errorMessage && (
               <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-300 font-semibold">
                 {errorMessage}
               </div>
             )}
-            {!loading && !errorMessage && hands.length === 0 && (
+            {!loading && !errorMessage && visibleHands.length === 0 && (
               <div className="rounded-xl border border-white/10 bg-[#242754] p-5 text-slate-300 font-semibold">
-                No hands yet. Play a game first and come back for review.
+                {historyFilter === "favorites"
+                  ? "No favorite hands yet."
+                  : "No hands yet. Play a game first and come back for review."}
               </div>
             )}
             
-            {hands.map((hand, idx) => {
+            {visibleHands.map((hand, idx) => {
               const finalStep = hand.steps[hand.steps.length - 1];
               return (
                 <motion.div
                   initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.1 }}
                   key={hand.id} onClick={() => { setSelectedHand(hand); setStepIdx(0); setIsPlaying(false); }}
-                  className="bg-[#242754] border border-white/10 hover:border-orange-500/50 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between cursor-pointer group shadow-lg hover:shadow-[0_0_20px_rgba(249,115,22,0.15)] transition-all"
+                  className="relative bg-[#242754] border border-white/10 hover:border-orange-500/50 rounded-2xl p-5 flex flex-col md:flex-row md:items-center justify-between cursor-pointer group shadow-lg hover:shadow-[0_0_20px_rgba(249,115,22,0.15)] transition-all"
                 >
+                  <button
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void toggleFavorite(hand.id, !hand.favorite);
+                    }}
+                    className={`absolute right-4 top-4 rounded-full p-2 border transition ${hand.favorite ? "bg-yellow-500/20 border-yellow-400/50 text-yellow-300" : "bg-white/5 border-white/10 text-slate-400 hover:text-white"}`}
+                    title={hand.favorite ? "Remove from favorites" : "Add to favorites"}
+                  >
+                    <Star className={`w-4 h-4 ${hand.favorite ? "fill-yellow-300" : ""}`} />
+                  </button>
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center gap-3 text-sm">
                       <span className="text-slate-400 font-bold">{hand.date}</span>
@@ -417,6 +645,10 @@ export function HandReview() {
   // --- Step-by-Step Detail View ---
   const currentStep = selectedHand.steps[stepIdx];
   const isShowdown = currentStep.street === "Showdown";
+  const currentStepAnalysis =
+    currentStep.order !== null
+      ? (stepAnalysisMap[currentStep.order] ?? currentStep.analysis)
+      : currentStep.analysis;
 
   return (
     <div className="flex flex-col w-full h-full bg-[#11122D] font-sans text-white relative overflow-hidden">
@@ -431,7 +663,35 @@ export function HandReview() {
           <ArrowLeft className="w-5 h-5" /> Back to List
         </button>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              void toggleFavorite(selectedHand.id, !selectedHand.favorite);
+            }}
+            className={`rounded-full p-2 border transition ${selectedHand.favorite ? "bg-yellow-500/20 border-yellow-400/50 text-yellow-300" : "bg-white/5 border-white/10 text-slate-400 hover:text-white"}`}
+            title={selectedHand.favorite ? "Remove from favorites" : "Add to favorites"}
+          >
+            <Star className={`w-4 h-4 ${selectedHand.favorite ? "fill-yellow-300" : ""}`} />
+          </button>
           <span className="text-sm font-bold text-slate-400">{selectedHand.title}</span>
+          <select
+            value={analysisProvider}
+            onChange={(event) => setAnalysisProvider(event.target.value as AnalysisProvider)}
+            className="bg-[#11122D] border border-white/10 rounded-lg px-2 py-1 text-xs font-bold text-slate-200"
+          >
+            <option value="local">Local</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+          </select>
+          <select
+            value={analysisModel}
+            onChange={(event) => setAnalysisModel(event.target.value)}
+            className="bg-[#11122D] border border-white/10 rounded-lg px-2 py-1 text-xs font-bold text-slate-200"
+          >
+            {ANALYSIS_MODELS[analysisProvider].map((item) => (
+              <option key={`${analysisProvider}-${item.value}`} value={item.value}>{item.label}</option>
+            ))}
+          </select>
           <div className="bg-orange-500/20 text-orange-400 px-3 py-1 rounded-full font-mono text-xs font-bold border border-orange-500/30 flex items-center gap-2 uppercase tracking-wider">
             <Target className="w-3 h-3" /> Step Analysis
           </div>
@@ -545,8 +805,10 @@ export function HandReview() {
                <div className="flex flex-col gap-2">
                  {selectedHand.steps.map((step, idx) => {
                  const isActive = idx === stepIdx;
-                 const isHero = step.player === "Hero";
+                   const isHero = step.isHeroAction;
                  const isSystem = step.player === "System";
+                   const stepOrder = step.order;
+                   const isAnalyzing = stepOrder !== null && analysisBusyOrder === stepOrder;
 
                  return (
                    <div 
@@ -571,6 +833,19 @@ export function HandReview() {
                           {step.desc}
                         </span>
                       </div>
+                      {!isSystem && stepOrder !== null && (
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void analyzeActionStep(stepOrder);
+                          }}
+                          disabled={analysisBusyOrder !== null}
+                          className="shrink-0 px-2 py-1 rounded-md border border-orange-500/40 bg-orange-500/10 text-orange-300 text-[10px] font-black uppercase tracking-wider hover:bg-orange-500/20 disabled:opacity-50 flex items-center gap-1"
+                        >
+                          <BrainCircuit className="w-3 h-3" />
+                          {isAnalyzing ? "Analyzing" : "Analyze"}
+                        </button>
+                      )}
                    </div>
                  )
                })}
@@ -598,7 +873,10 @@ export function HandReview() {
                            </span>
                         )}
                       </h4>
-                      <p className="text-sm text-slate-300 leading-relaxed">{currentStep.analysis}</p>
+                      <p className="text-sm text-slate-300 leading-relaxed">{currentStepAnalysis}</p>
+                      {analysisError && (
+                        <p className="mt-2 text-xs font-semibold text-red-300">{analysisError}</p>
+                      )}
                     </div>
                   </div>
 
