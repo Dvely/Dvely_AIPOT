@@ -283,9 +283,11 @@ const getInitialPlayers = (count: number, max: number): Player[] => {
 const FULL_COMMUNITY_CARDS = ["Q♠", "J♠", "10♠", "2♥", "5♣"];
 const HERO_CARDS = ["A♠", "K♠"];
 const TURN_TIMER_SECONDS = 15;
-const SHOWDOWN_RESULT_DISPLAY_MS = 8000;
-const SHOWDOWN_RESULT_DISPLAY_HUMAN_MS = 14000;
-const QUICK_RESULT_DISPLAY_MS = 8000;
+const SHOWDOWN_RESULT_DISPLAY_MS = 12000;
+const SHOWDOWN_RESULT_DISPLAY_HUMAN_MS = 21000;
+const SHOWDOWN_RESULT_DISPLAY_AI_BOT_MS = 18000;
+const QUICK_RESULT_DISPLAY_MS = 12000;
+const QUICK_RESULT_DISPLAY_AI_BOT_MS = 18000;
 const HAND_RESET_CLEANUP_MS = 5000;
 const LIVE_SYNC_INTERVAL_MS = 600;
 const ACTION_FX_DURATION_MS = 1000;
@@ -316,6 +318,10 @@ function createRandomAvatarInfo(): NonNullable<LiveParticipant["avatarInfo"]> {
 }
 
 function getLiveShowdownDisplayMs(room: LiveRoom): number {
+  if (room.type === "ai_bot") {
+    return SHOWDOWN_RESULT_DISPLAY_AI_BOT_MS;
+  }
+
   const humanCount = room.seats.reduce((count, seat) => {
     const participant = seat.participant;
     if (!participant) return count;
@@ -763,7 +769,7 @@ export function PlayTable() {
 
     const timer = setTimeout(() => {
       void handleLiveStartOrNext();
-    }, QUICK_RESULT_DISPLAY_MS);
+    }, QUICK_RESULT_DISPLAY_AI_BOT_MS);
 
     return () => clearTimeout(timer);
   }, [
@@ -983,6 +989,9 @@ export function PlayTable() {
                 }
                 return prev;
               });
+            } else if (latestAction.action === "all-in") {
+              setPersistentAggroFx(null);
+              triggerActionFx(actorPlayerId, "all-in");
             } else {
               triggerActionFx(actorPlayerId, latestAction.action as ActionFxType);
             }
