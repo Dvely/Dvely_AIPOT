@@ -98,17 +98,17 @@ const BOT_MODEL_OPTIONS: BotModelOption[] = [
   },
   {
     id: "local-qwen",
+    label: "Local Qwen3 8B",
+    provider: "local",
+    modelTier: "free",
+    model: "qwen3:8b",
+  },
+  {
+    id: "local-qwen25",
     label: "Local Qwen 2.5 Coder",
     provider: "local",
     modelTier: "free",
     model: "qwen2.5-coder:3b",
-  },
-  {
-    id: "local-exaone",
-    label: "Local EXAONE Deep",
-    provider: "local",
-    modelTier: "free",
-    model: "exaone-deep:2.4b",
   },
   {
     id: "openai-gpt41-mini",
@@ -627,7 +627,7 @@ export function PlayTable() {
   const [pendingHeroAction, setPendingHeroAction] = useState(false);
   const [liveBusy, setLiveBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
-  const [botModelId, setBotModelId] = useState<string>("local-qwen");
+  const [botModelId, setBotModelId] = useState<string>("random-custom");
   const [botStyle, setBotStyle] = useState<BotStyle>("balanced");
   const lastAnimatedLiveHandIdRef = useRef<string | null>(null);
   const autoNextHandKeyRef = useRef<string | null>(null);
@@ -1117,7 +1117,7 @@ export function PlayTable() {
 
   useEffect(() => {
     if (selectedSeat === null) return;
-    setBotModelId("local-qwen");
+    setBotModelId("random-custom");
     setBotStyle("balanced");
   }, [selectedSeat]);
 
