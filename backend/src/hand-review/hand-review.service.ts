@@ -149,6 +149,9 @@ export class HandReviewService {
 					provider: result.provider ?? params.provider,
 					model: result.model ?? params.model,
 					analysis: review.analysis,
+					evBb: review.evBb,
+					heroEquity: review.heroEquity,
+					gtoMix: review.gtoMix,
 				});
 			}
 
@@ -176,15 +179,17 @@ export class HandReviewService {
 				`Hand analyze job failed. handId=${params.handId} requestId=${params.requestId}`,
 				error instanceof Error ? error.stack : undefined,
 			);
+			const reason = error instanceof Error ? error.message : 'Unknown error';
+			const reasonSuffix = reason ? ` (${reason.slice(0, 120)})` : '';
 			const finishedAt = new Date().toISOString();
 			const failedJob: HandReviewAnalyzeJob = {
 				...runningJob,
 				status: 'failed',
 				finishedAt,
 				message: this.localizedText(params.language, {
-					en: 'Background hand analysis failed. Please try again.',
-					ko: '백그라운드 핸드 분석에 실패했습니다. 다시 시도해 주세요.',
-					ja: 'バックグラウンドのハンド分析に失敗しました。再試行してください。',
+					en: `Background hand analysis failed. Please try again.${reasonSuffix}`,
+					ko: `백그라운드 핸드 분석에 실패했습니다. 다시 시도해 주세요.${reasonSuffix}`,
+					ja: `バックグラウンドのハンド分析に失敗しました。再試行してください。${reasonSuffix}`,
 				}),
 			};
 			this.store.setHandReviewAnalyzeJob({

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  ArrowLeft, History, PlayCircle, ChevronRight, CheckCircle2, XCircle, BrainCircuit, Target, ShieldAlert, PauseCircle, ChevronLeft, Star
+  ArrowLeft, History, PlayCircle, ChevronRight, CheckCircle2, XCircle, BrainCircuit, Target, ShieldAlert, PauseCircle, ChevronLeft, Star, Info
 } from "lucide-react";
 import { apiFetch } from "../api";
 import { getCurrentAuth, getCurrentPreferredLanguage, getCurrentUserId } from "../auth";
@@ -25,7 +25,16 @@ interface ActionStep {
   analysis: string;
   evScore: number;
   heroEquity: number; // Win probability (%)
+  gtoMix: GtoMix;
   heatMapType: "tight" | "premium" | "broadway" | "draws" | "bluff" | "showdown";
+}
+
+interface GtoMix {
+  check: number;
+  call: number;
+  fold: number;
+  raise: number;
+  allIn: number;
 }
 
 interface HandHistory {
@@ -48,6 +57,9 @@ interface HandActionAnalysisRecord {
   provider: "local" | "openai" | "claude" | "gemini";
   model: string;
   analysis: string;
+  evBb?: number;
+  heroEquity?: number;
+  gtoMix?: GtoMix;
   createdByUserId: string;
   createdAt: string;
 }
@@ -160,6 +172,52 @@ function toHeatMapType(action: string): ActionStep["heatMapType"] {
   return "tight";
 }
 
+const DEFAULT_GTO_MIX: GtoMix = {
+  check: 20,
+  call: 20,
+  fold: 20,
+  raise: 20,
+  allIn: 20,
+};
+
+function normalizeGtoMix(mix?: Partial<GtoMix> | null): GtoMix {
+  if (!mix) return { ...DEFAULT_GTO_MIX };
+
+  const toSafe = (value: unknown) => {
+    const num = Number(value);
+    return Number.isFinite(num) && num >= 0 ? num : 0;
+  };
+
+  const draft: GtoMix = {
+    check: toSafe(mix.check),
+    call: toSafe(mix.call),
+    fold: toSafe(mix.fold),
+    raise: toSafe(mix.raise),
+    allIn: toSafe(mix.allIn),
+  };
+
+  const total = draft.check + draft.call + draft.fold + draft.raise + draft.allIn;
+  if (!Number.isFinite(total) || total <= 0) return { ...DEFAULT_GTO_MIX };
+
+  const normalized: GtoMix = {
+    check: Math.round((draft.check / total) * 1000) / 10,
+    call: Math.round((draft.call / total) * 1000) / 10,
+    fold: Math.round((draft.fold / total) * 1000) / 10,
+    raise: Math.round((draft.raise / total) * 1000) / 10,
+    allIn: Math.round((draft.allIn / total) * 1000) / 10,
+  };
+
+  const sum = normalized.check + normalized.call + normalized.fold + normalized.raise + normalized.allIn;
+  const diff = Math.round((100 - sum) * 10) / 10;
+  if (Math.abs(diff) >= 0.1) {
+    const keys: Array<keyof GtoMix> = ["check", "call", "fold", "raise", "allIn"];
+    const biggest = keys.reduce((prev, cur) => (normalized[cur] > normalized[prev] ? cur : prev));
+    normalized[biggest] = Math.max(0, Math.round((normalized[biggest] + diff) * 10) / 10);
+  }
+
+  return normalized;
+}
+
 function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): HandHistory {
   const participants = record.participants ?? [];
   const analyses = record.analyses ?? [];
@@ -242,8 +300,12 @@ function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): H
         analysis:
           latestAnalysis?.analysis ??
           `Live action replay from room ${record.roomId.slice(0, 8)}.`,
-        evScore: 0,
-        heroEquity: 50,
+        evScore: Number.isFinite(Number(latestAnalysis?.evBb)) ? Number(latestAnalysis?.evBb) : 0,
+        heroEquity:
+          Number.isFinite(Number(latestAnalysis?.heroEquity))
+            ? Math.max(0, Math.min(100, Number(latestAnalysis?.heroEquity)))
+            : 50,
+        gtoMix: normalizeGtoMix(latestAnalysis?.gtoMix),
         heatMapType: toHeatMapType(action.action),
       };
     });
@@ -264,6 +326,7 @@ function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): H
     analysis: "Showdown completed from real game data.",
     evScore: 0,
     heroEquity: 100,
+    gtoMix: { ...DEFAULT_GTO_MIX },
     heatMapType: "showdown",
   });
 
@@ -780,6 +843,13 @@ export function HandReview() {
   const isShowdown = currentStep.street === "Showdown";
   const analyzeInProgress =
     handAnalyzeBusy || analyzeStatus === "pending" || analyzeStatus === "running";
+  const gtoBreakdown = [
+    { key: "check", label: t("Check"), value: currentStep.gtoMix.check, color: "bg-sky-500" },
+    { key: "call", label: t("Call"), value: currentStep.gtoMix.call, color: "bg-indigo-500" },
+    { key: "fold", label: t("Fold"), value: currentStep.gtoMix.fold, color: "bg-slate-500" },
+    { key: "raise", label: t("Raise"), value: currentStep.gtoMix.raise, color: "bg-amber-500" },
+    { key: "allIn", label: t("All-In"), value: currentStep.gtoMix.allIn, color: "bg-rose-500" },
+  ];
   const currentStepAnalysis =
     currentStep.order !== null
       ? (stepAnalysisMap[currentStep.order] ?? currentStep.analysis)
@@ -999,15 +1069,43 @@ export function HandReview() {
                   {/* Analysis Text */}
                   <div className={`p-4 rounded-xl border flex gap-3 ${currentStep.evScore > 0 ? 'bg-green-500/10 border-green-500/30' : currentStep.evScore < 0 ? 'bg-red-500/10 border-red-500/30' : 'bg-slate-800/50 border-slate-600/50'}`}>
                     {currentStep.evScore > 0 ? <CheckCircle2 className="w-6 h-6 text-green-400 shrink-0"/> : currentStep.evScore < 0 ? <XCircle className="w-6 h-6 text-red-400 shrink-0"/> : <Target className="w-6 h-6 text-slate-400 shrink-0"/>}
-                    <div>
-                      <h4 className="font-bold mb-1 text-white flex items-center gap-2">
+                    <div className="w-full">
+                      <h4 className="font-bold mb-2 text-white flex items-center gap-2">
                         {t("Step Analysis")}
-                        {currentStep.evScore !== 0 && (
-                           <span className={`text-xs px-2 py-0.5 rounded-full ${currentStep.evScore > 0 ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>
-                             {currentStep.evScore > 0 ? '+' : ''}{currentStep.evScore} EV
-                           </span>
-                        )}
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-black ${currentStep.evScore > 0 ? 'bg-green-500/25 text-green-300 border border-green-500/40' : currentStep.evScore < 0 ? 'bg-red-500/25 text-red-300 border border-red-500/40' : 'bg-slate-700 text-slate-300 border border-slate-500/40'}`}>
+                          {currentStep.evScore > 0 ? '+' : ''}{currentStep.evScore.toFixed(2)} {t("EV (bb)")}
+                        </span>
+                        <span className="text-xs px-2 py-0.5 rounded-full font-black bg-cyan-500/20 text-cyan-200 border border-cyan-400/30">
+                          {t("Equity")}: {currentStep.heroEquity.toFixed(1)}%
+                        </span>
+                        <div className="relative group">
+                          <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-200 border border-indigo-400/30 font-bold cursor-default">
+                            {t("GTO Mix")}
+                            <Info className="w-3 h-3" />
+                          </span>
+                          <div className="pointer-events-none absolute right-0 top-7 w-48 rounded-lg border border-white/15 bg-[#0f1230] p-2 text-[11px] text-slate-200 shadow-xl opacity-0 transition-opacity group-hover:opacity-100 z-30">
+                            {gtoBreakdown.map((item) => (
+                              <div key={`tip-${item.key}`} className="flex items-center justify-between py-0.5">
+                                <span>{item.label}</span>
+                                <span className="font-black">{item.value.toFixed(1)}%</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       </h4>
+
+                      <div className="grid grid-cols-1 gap-1.5 mb-3">
+                        {gtoBreakdown.map((item) => (
+                          <div key={item.key} className="flex items-center gap-2 text-[11px]">
+                            <span className="w-14 text-slate-300 font-bold uppercase">{item.label}</span>
+                            <div className="flex-1 h-2 rounded-full bg-slate-800 border border-white/10 overflow-hidden">
+                              <div className={`${item.color} h-full`} style={{ width: `${Math.max(0, Math.min(100, item.value))}%` }} />
+                            </div>
+                            <span className="w-12 text-right text-slate-200 font-black">{item.value.toFixed(1)}%</span>
+                          </div>
+                        ))}
+                      </div>
+
                       <p className="text-sm text-slate-300 leading-relaxed">{currentStepAnalysis}</p>
                       {analysisSummary && (
                         <p className="mt-2 text-xs font-semibold text-cyan-300">{analysisSummary}</p>
