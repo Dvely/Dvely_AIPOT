@@ -2,7 +2,7 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { AiBotDecision } from '../common/domain.types';
+import { AiBotDecision, GtoActionMix } from '../common/domain.types';
 import { PreferredLanguage } from '../common/enums/language.enum';
 import { UserRole } from '../common/enums/role.enum';
 import { ActionType, BotModelTier, LlmProvider } from '../common/enums/room.enum';
@@ -156,6 +156,140 @@ export class AiService {
 		].join('\n');
 	}
 
+	private toProviderText(content: unknown): string {
+		if (typeof content === 'string') {
+			return content;
+		}
+
+		if (Array.isArray(content)) {
+			const merged = content
+				.map((item) => {
+					if (typeof item === 'string') return item;
+					if (!item || typeof item !== 'object') return '';
+					const block = item as Record<string, unknown>;
+					if (typeof block.text === 'string') return block.text;
+					if (typeof block.content === 'string') return block.content;
+					return '';
+				})
+				.filter((part) => part.length > 0)
+				.join('\n');
+			if (merged.trim().length > 0) {
+				return merged;
+			}
+		}
+
+		if (content && typeof content === 'object') {
+			const obj = content as Record<string, unknown>;
+			if (typeof obj.text === 'string') return obj.text;
+			if (typeof obj.content === 'string') return obj.content;
+			try {
+				return JSON.stringify(obj);
+			} catch {
+				return '';
+			}
+		}
+
+		return '';
+	}
+
+	private defaultGtoMix(): GtoActionMix {
+		return {
+			check: 20,
+			call: 20,
+			fold: 20,
+			raise: 20,
+			allIn: 20,
+		};
+	}
+
+	private actionHeuristicMix(action: string): GtoActionMix {
+		const normalized = action.toLowerCase();
+		if (normalized === 'fold') {
+			return { check: 10, call: 8, fold: 72, raise: 7, allIn: 3 };
+		}
+		if (normalized === 'check') {
+			return { check: 62, call: 8, fold: 7, raise: 18, allIn: 5 };
+		}
+		if (normalized === 'call') {
+			return { check: 9, call: 58, fold: 14, raise: 14, allIn: 5 };
+		}
+		if (normalized === 'raise' || normalized === 'bet') {
+			return { check: 8, call: 16, fold: 9, raise: 58, allIn: 9 };
+		}
+		if (normalized === 'all-in' || normalized === 'all_in' || normalized === 'allin') {
+			return { check: 4, call: 12, fold: 8, raise: 16, allIn: 60 };
+		}
+		return this.defaultGtoMix();
+	}
+
+	private normalizeEvBb(value: unknown): number {
+		const raw = Number(value);
+		if (!Number.isFinite(raw)) return 0;
+		return Math.round(raw * 100) / 100;
+	}
+
+	private normalizeEquity(value: unknown): number {
+		const raw = Number(value);
+		if (!Number.isFinite(raw)) return 50;
+		const clamped = Math.max(0, Math.min(100, raw));
+		return Math.round(clamped * 10) / 10;
+	}
+
+	private normalizeGtoMix(value: unknown): GtoActionMix {
+		if (!value || typeof value !== 'object') {
+			return this.defaultGtoMix();
+		}
+
+		const source = value as Record<string, unknown>;
+		const pick = (keys: string[]) => {
+			for (const key of keys) {
+				const current = Number(source[key]);
+				if (Number.isFinite(current)) {
+					return Math.max(0, current);
+				}
+			}
+			return 0;
+		};
+
+		const draft: GtoActionMix = {
+			check: pick(['check']),
+			call: pick(['call']),
+			fold: pick(['fold']),
+			raise: pick(['raise', 'bet']),
+			allIn: pick(['allIn', 'all_in', 'all-in', 'allin', 'jam']),
+		};
+
+		const total = draft.check + draft.call + draft.fold + draft.raise + draft.allIn;
+		if (!Number.isFinite(total) || total <= 0) {
+			return this.defaultGtoMix();
+		}
+
+		const normalized: GtoActionMix = {
+			check: Math.round((draft.check / total) * 1000) / 10,
+			call: Math.round((draft.call / total) * 1000) / 10,
+			fold: Math.round((draft.fold / total) * 1000) / 10,
+			raise: Math.round((draft.raise / total) * 1000) / 10,
+			allIn: Math.round((draft.allIn / total) * 1000) / 10,
+		};
+
+		const sum =
+			normalized.check +
+			normalized.call +
+			normalized.fold +
+			normalized.raise +
+			normalized.allIn;
+		const diff = Math.round((100 - sum) * 10) / 10;
+		if (Math.abs(diff) >= 0.1) {
+			const keys: Array<keyof GtoActionMix> = ['check', 'call', 'fold', 'raise', 'allIn'];
+			const biggest = keys.reduce((prev, cur) =>
+				normalized[cur] > normalized[prev] ? cur : prev,
+			);
+			normalized[biggest] = Math.max(0, Math.round((normalized[biggest] + diff) * 10) / 10);
+		}
+
+		return normalized;
+	}
+
 	private async callOpenAICompatible(options: {
 		baseUrl: string;
 		apiKey?: string;
@@ -163,6 +297,7 @@ export class AiService {
 		systemPrompt: string;
 		userPrompt: string;
 		timeoutMs?: number;
+		responseFormatJson?: boolean;
 	}): Promise<string> {
 		const endpoint = `${options.baseUrl.replace(/\/$/, '')}/chat/completions`;
 		const headers: Record<string, string> = {
@@ -172,26 +307,27 @@ export class AiService {
 			headers.Authorization = `Bearer ${options.apiKey}`;
 		}
 
+		const requestBody: Record<string, unknown> = {
+			model: options.model,
+			temperature: 0.2,
+			messages: [
+				{ role: 'system', content: options.systemPrompt },
+				{ role: 'user', content: options.userPrompt },
+			],
+		};
+		if (options.responseFormatJson ?? true) {
+			requestBody.response_format = { type: 'json_object' };
+		}
+
 		const response = await firstValueFrom(
-			this.httpService.post(
-				endpoint,
-				{
-					model: options.model,
-					temperature: 0.2,
-					response_format: { type: 'json_object' },
-					messages: [
-						{ role: 'system', content: options.systemPrompt },
-						{ role: 'user', content: options.userPrompt },
-					],
-				},
-				{ headers, timeout: options.timeoutMs ?? BOT_PROVIDER_TIMEOUT_MS },
-			),
+			this.httpService.post(endpoint, requestBody, {
+				headers,
+				timeout: options.timeoutMs ?? BOT_PROVIDER_TIMEOUT_MS,
+			}),
 		);
 
-		return (
-			response.data?.choices?.[0]?.message?.content ??
-			JSON.stringify(this.defaultBotDecision())
-		);
+		const normalized = this.toProviderText(response.data?.choices?.[0]?.message?.content);
+		return normalized || JSON.stringify(this.defaultBotDecision());
 	}
 
 	private async callClaude(options: {
@@ -318,6 +454,48 @@ export class AiService {
 			'http://127.0.0.1:8000/v1',
 		);
 		const localKey = this.configService.get<string>('LOCAL_LLM_API_KEY');
+		const fallbackModel = this.configService.get('LOCAL_LLM_MODEL', 'qwen2.5-coder:3b');
+
+		try {
+			return await this.callOpenAICompatible({
+				baseUrl: localBase,
+				apiKey: localKey,
+				model: options.model,
+				systemPrompt: options.systemPrompt,
+				userPrompt: options.userPrompt,
+				timeoutMs: options.timeoutMs,
+				responseFormatJson: true,
+			});
+		} catch {
+			// Some local OpenAI-compatible servers/models reject response_format=json_object.
+		}
+
+		try {
+			return await this.callOpenAICompatible({
+				baseUrl: localBase,
+				apiKey: localKey,
+				model: options.model,
+				systemPrompt: options.systemPrompt,
+				userPrompt: options.userPrompt,
+				timeoutMs: options.timeoutMs,
+				responseFormatJson: false,
+			});
+		} catch {
+			// Continue to fallback model attempt if requested model is unavailable.
+		}
+
+		if (options.model !== fallbackModel) {
+			return this.callOpenAICompatible({
+				baseUrl: localBase,
+				apiKey: localKey,
+				model: fallbackModel,
+				systemPrompt: options.systemPrompt,
+				userPrompt: options.userPrompt,
+				timeoutMs: options.timeoutMs,
+				responseFormatJson: false,
+			});
+		}
+
 		return this.callOpenAICompatible({
 			baseUrl: localBase,
 			apiKey: localKey,
@@ -325,6 +503,7 @@ export class AiService {
 			systemPrompt: options.systemPrompt,
 			userPrompt: options.userPrompt,
 			timeoutMs: options.timeoutMs,
+			responseFormatJson: false,
 		});
 	}
 
@@ -606,7 +785,13 @@ export class AiService {
 					ko: '분석할 액션 로그가 없습니다.',
 					ja: '分析するアクションログがありません。',
 				}),
-				reviews: [] as Array<{ order: number; analysis: string }>,
+				reviews: [] as Array<{
+					order: number;
+					analysis: string;
+					evBb: number;
+					heroEquity: number;
+					gtoMix: GtoActionMix;
+				}>,
 			};
 		}
 
@@ -614,7 +799,9 @@ export class AiService {
 			'You are AIPOT action-by-action poker reviewer.',
 			'Evaluate each action order in the provided hand.',
 			'Return strict JSON only.',
-			'Schema: {"summary":string,"actions":[{"order":number,"analysis":string,"verdict":"good|neutral|bad","score":-5..5,"betterLine":string}]}',
+			'Schema: {"summary":string,"actions":[{"order":number,"analysis":string,"verdict":"good|neutral|bad","score":-5..5,"betterLine":string,"evBb":number,"heroEquity":number,"mix":{"check":number,"call":number,"fold":number,"raise":number,"allIn":number}}]}',
+			'All mix values must be percentages and sum close to 100.',
+			'In analysis, first describe EV/equity/frequency baseline, then provide coaching advice.',
 			'If uncertain, still provide concise feedback per action order.',
 			premium ? 'Include deeper tactical notes in analysis text.' : 'Keep analysis practical and concise.',
 			this.languageInstruction(language),
@@ -653,7 +840,10 @@ export class AiService {
 			const parsedActions = Array.isArray(parsed?.actions)
 				? (parsed.actions as Array<Record<string, unknown>>)
 				: [];
-			const byOrder = new Map<number, string>();
+			const byOrder = new Map<
+				number,
+				{ analysis: string; evBb: number; heroEquity: number; gtoMix: GtoActionMix }
+			>();
 
 			for (const item of parsedActions) {
 				const order = Number(item.order ?? NaN);
@@ -662,6 +852,15 @@ export class AiService {
 				const analysis = String(item.analysis ?? '').trim();
 				const verdict = String(item.verdict ?? '').trim();
 				const score = Number(item.score ?? NaN);
+				const evBb = this.normalizeEvBb(
+					item.evBb ?? item.ev_bb ?? item.ev ?? item.evScore ?? score,
+				);
+				const heroEquity = this.normalizeEquity(
+					item.heroEquity ?? item.hero_equity ?? item.equity ?? item.winRate,
+				);
+				const gtoMix = this.normalizeGtoMix(
+					item.mix ?? item.frequency ?? item.frequencies,
+				);
 				const betterLine = String(item.betterLine ?? '').trim();
 				const betterLineLabel = this.localizedText(language, {
 					en: 'Better line',
@@ -687,26 +886,32 @@ export class AiService {
 					chunks.push(`${verdictLabel}: ${verdict || neutralText}${scoreLabel}`);
 				}
 
-				byOrder.set(
-					order,
-					chunks.join('\n').trim() ||
+				byOrder.set(order, {
+					analysis:
+						chunks.join('\n').trim() ||
 						this.localizedText(language, {
 							en: 'No detailed text was provided for this action.',
 							ko: '해당 액션에 대한 상세 텍스트가 제공되지 않았습니다.',
 							ja: 'このアクションに対する詳細テキストは提供されませんでした。',
 						}),
-				);
+					evBb,
+					heroEquity,
+					gtoMix,
+				});
 			}
 
 			const reviews = actions.map((action) => ({
 				order: action.order,
 				analysis:
-					byOrder.get(action.order) ??
+					byOrder.get(action.order)?.analysis ??
 					this.localizedText(language, {
 						en: `Action #${action.order}: ${action.action.toUpperCase()} / ${action.street} - Generated a default review.`,
 						ko: `액션 #${action.order}: ${action.action.toUpperCase()} / ${action.street} - 기본 리뷰를 생성했습니다.`,
 						ja: `アクション #${action.order}: ${action.action.toUpperCase()} / ${action.street} - デフォルトレビューを生成しました。`,
 					}),
+				evBb: byOrder.get(action.order)?.evBb ?? 0,
+				heroEquity: byOrder.get(action.order)?.heroEquity ?? 50,
+				gtoMix: byOrder.get(action.order)?.gtoMix ?? this.actionHeuristicMix(action.action),
 			}));
 
 			return {
@@ -731,6 +936,9 @@ export class AiService {
 						ko: `액션 #${action.order}: ${action.action.toUpperCase()} / ${action.street} - 서비스 오류로 상세 분석을 생성하지 못했습니다.`,
 						ja: `アクション #${action.order}: ${action.action.toUpperCase()} / ${action.street} - サービスエラーにより詳細分析を生成できませんでした。`,
 					}),
+					evBb: 0,
+					heroEquity: 50,
+					gtoMix: this.actionHeuristicMix(action.action),
 				})),
 			};
 		}

@@ -222,8 +222,19 @@ export interface HandActionAnalysis {
   provider: LlmProvider;
   model: string;
   analysis: string;
+  evBb?: number;
+  heroEquity?: number;
+  gtoMix?: GtoActionMix;
   createdByUserId: string;
   createdAt: string;
+}
+
+export interface GtoActionMix {
+  check: number;
+  call: number;
+  fold: number;
+  raise: number;
+  allIn: number;
 }
 
 export type HandReviewAnalyzeStatus = 'pending' | 'running' | 'completed' | 'failed';

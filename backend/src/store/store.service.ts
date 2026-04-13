@@ -25,6 +25,7 @@ import {
 	AvatarConfig,
 	FriendRequestRecord,
 	GameState,
+	GtoActionMix,
 	HandActionAnalysis,
 	HandReviewAnalyzeJob,
 	HandAction,
@@ -2493,6 +2494,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		provider: LlmProvider;
 		model: string;
 		analysis: string;
+		evBb?: number;
+		heroEquity?: number;
+		gtoMix?: GtoActionMix;
 	}): HandActionAnalysis {
 		const review = this.handReviews.get(params.handId);
 		if (!review) {
@@ -2519,6 +2523,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			provider: params.provider,
 			model: params.model,
 			analysis: params.analysis,
+			evBb: params.evBb,
+			heroEquity: params.heroEquity,
+			gtoMix: params.gtoMix,
 			createdByUserId: params.userId,
 			createdAt: new Date().toISOString(),
 		};
