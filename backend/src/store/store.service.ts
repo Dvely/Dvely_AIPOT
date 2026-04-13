@@ -184,11 +184,63 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		}, 1000);
 	}
 
-	onModuleDestroy(): void {
+	async onModuleDestroy(): Promise<void> {
 		if (this.timeoutTicker) {
 			clearInterval(this.timeoutTicker);
 			this.timeoutTicker = null;
 		}
+
+		if (this.failInFlightHandAnalyzeJobs('shutdown')) {
+			try {
+				await this.persistSnapshot();
+			} catch {
+				// Snapshot persist failure on shutdown should not crash process teardown.
+			}
+		}
+	}
+
+	private localizedAnalyzeInterruptedMessage(
+		language: PreferredLanguage,
+		reason: 'startup' | 'shutdown',
+	): string {
+		if (reason === 'shutdown') {
+			if (language === PreferredLanguage.KO) {
+				return '서버 종료로 백그라운드 분석이 중단되어 작업이 종료되었습니다. 서버 재시작 후 다시 분석해 주세요.';
+			}
+			if (language === PreferredLanguage.JA) {
+				return 'サーバー終了によりバックグラウンド分析が中断され、ジョブを終了しました。サーバー再起動後に再分析してください。';
+			}
+			return 'Background analysis was interrupted by server shutdown and has been closed. Please run analysis again after restart.';
+		}
+
+		if (language === PreferredLanguage.KO) {
+			return '서버 재시작으로 이전 백그라운드 분석이 중단되어 작업을 실패 처리했습니다. 다시 분석해 주세요.';
+		}
+		if (language === PreferredLanguage.JA) {
+			return 'サーバー再起動により以前のバックグラウンド分析が中断されたため、ジョブを失敗として処理しました。再分析してください。';
+		}
+		return 'A previous background analysis was interrupted by server restart and marked as failed. Please run analysis again.';
+	}
+
+	private failInFlightHandAnalyzeJobs(reason: 'startup' | 'shutdown'): boolean {
+		let changed = false;
+		const finishedAt = new Date().toISOString();
+
+		for (const review of this.handReviews.values()) {
+			const job = review.analyzeJob;
+			if (!job) continue;
+			if (job.status !== 'pending' && job.status !== 'running') continue;
+
+			review.analyzeJob = {
+				...job,
+				status: 'failed',
+				finishedAt,
+				message: this.localizedAnalyzeInterruptedMessage(job.language, reason),
+			};
+			changed = true;
+		}
+
+		return changed;
 	}
 
 	private createRandomBotAvatar(): AvatarConfig {
@@ -279,6 +331,15 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			}
 			for (const review of parsed.handReviews ?? []) {
 				this.handReviews.set(review.handId, review);
+			}
+
+			const normalized = this.failInFlightHandAnalyzeJobs('startup');
+			if (normalized) {
+				try {
+					await this.persistSnapshot();
+				} catch {
+					// Ignore snapshot normalization failure and continue with in-memory corrected state.
+				}
 			}
 			this.roomSeeded = parsed.roomSeeded ?? false;
 		} catch {
