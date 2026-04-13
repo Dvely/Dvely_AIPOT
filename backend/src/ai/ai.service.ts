@@ -138,6 +138,42 @@ export class AiService {
 		return 'Output language must be English only. Do not mix Korean or Japanese sentences.';
 	}
 
+	private buildActionReviewSystemPrompt(options: {
+		language: PreferredLanguage;
+		includePremiumAnalysis: boolean;
+		requiredOrdersOnly?: boolean;
+	}): string {
+		const requiredOrdersOnly = options.requiredOrdersOnly ?? false;
+
+		return [
+			'You are AIPOT action-by-action poker coach.',
+			'Always analyze from HERO perspective only.',
+			'Do not evaluate opponents as if they are the user.',
+			'For opponent actions, coach what HERO should do next based on hero hand, board, pot and position.',
+			'Never assume hidden opponent hole cards before showdown.',
+			'Use only public board + action history + hero cards.',
+			'Return strict JSON only.',
+			requiredOrdersOnly
+				? 'Schema: {"actions":[{"order":number,"analysis":string,"verdict":"good|neutral|bad","score":-5..5,"betterLine":string,"evBb":number,"heroEquity":number,"mix":{"check":number,"call":number,"fold":number,"raise":number,"allIn":number}}]}'
+				: 'Schema: {"summary":string,"actions":[{"order":number,"analysis":string,"verdict":"good|neutral|bad","score":-5..5,"betterLine":string,"evBb":number,"heroEquity":number,"mix":{"check":number,"call":number,"fold":number,"raise":number,"allIn":number}}]}',
+			requiredOrdersOnly
+				? 'Must include every order listed in requiredOrders with no omissions.'
+				: '',
+			'Every action item must include evBb and heroEquity as numeric values.',
+			'All mix values must be percentages and sum close to 100.',
+			'In each analysis text, first describe EV/equity/frequency baseline, then provide concise coaching advice.',
+			'Keep each action analysis short (2-4 sentences).',
+			'If uncertain, still provide concise feedback per action order.',
+			options.includePremiumAnalysis
+				? 'Include deeper tactical notes in analysis text.'
+				: 'Keep analysis practical and concise.',
+			this.languageInstruction(options.language),
+			this.strictLanguageInstruction(options.language),
+		]
+			.filter((line) => line.length > 0)
+			.join(' ');
+	}
+
 	private handReviewFallback(language: PreferredLanguage, premium: boolean): string {
 		if (language === PreferredLanguage.KO) {
 			return [
@@ -664,45 +700,30 @@ export class AiService {
 		);
 		const localKey = this.configService.get<string>('LOCAL_LLM_API_KEY');
 		const fallbackModel = this.configService.get('LOCAL_LLM_MODEL', 'qwen2.5-coder:3b');
+		const modelCandidates =
+			options.model === fallbackModel ? [options.model] : [options.model, fallbackModel];
 
-		try {
-			return await this.callOpenAICompatible({
-				baseUrl: localBase,
-				apiKey: localKey,
-				model: options.model,
-				systemPrompt: options.systemPrompt,
-				userPrompt: options.userPrompt,
-				timeoutMs: options.timeoutMs,
-				responseFormatJson: false,
-				maxTokens: options.maxTokens,
-			});
-		} catch {
-			// Continue to fallback model attempt if requested model is unavailable.
+		let lastError: unknown;
+		for (const responseFormatJson of [true, false]) {
+			for (const candidateModel of modelCandidates) {
+				try {
+					return await this.callOpenAICompatible({
+						baseUrl: localBase,
+						apiKey: localKey,
+						model: candidateModel,
+						systemPrompt: options.systemPrompt,
+						userPrompt: options.userPrompt,
+						timeoutMs: options.timeoutMs,
+						responseFormatJson,
+						maxTokens: options.maxTokens,
+					});
+				} catch (error) {
+					lastError = error;
+				}
+			}
 		}
 
-		if (options.model !== fallbackModel) {
-			return this.callOpenAICompatible({
-				baseUrl: localBase,
-				apiKey: localKey,
-				model: fallbackModel,
-				systemPrompt: options.systemPrompt,
-				userPrompt: options.userPrompt,
-				timeoutMs: options.timeoutMs,
-				responseFormatJson: false,
-				maxTokens: options.maxTokens,
-			});
-		}
-
-		return this.callOpenAICompatible({
-			baseUrl: localBase,
-			apiKey: localKey,
-			model: options.model,
-			systemPrompt: options.systemPrompt,
-			userPrompt: options.userPrompt,
-			timeoutMs: options.timeoutMs,
-			responseFormatJson: false,
-			maxTokens: options.maxTokens,
-		});
+		throw lastError ?? new Error('Local LLM request failed.');
 	}
 
 	private customRandomDecision(dto: BotActionRequestDto): AiBotDecision {
@@ -1028,23 +1049,10 @@ export class AiService {
 			};
 		}
 
-		const systemPrompt = [
-			'You are AIPOT action-by-action poker coach.',
-			'Always analyze from HERO perspective only.',
-			'Do not evaluate opponents as if they are the user.',
-			'For opponent actions, coach what HERO should do next based on hero hand, board, pot and position.',
-			'Never assume hidden opponent hole cards before showdown.',
-			'Use only public board + action history + hero cards.',
-			'Return strict JSON only.',
-			'Schema: {"summary":string,"actions":[{"order":number,"analysis":string,"verdict":"good|neutral|bad","score":-5..5,"betterLine":string,"evBb":number,"heroEquity":number,"mix":{"check":number,"call":number,"fold":number,"raise":number,"allIn":number}}]}',
-			'All mix values must be percentages and sum close to 100.',
-			'In each analysis text, first describe EV/equity/frequency baseline, then provide concise coaching advice.',
-			'Keep each action analysis short (2-4 sentences).',
-			'If uncertain, still provide concise feedback per action order.',
-			premium ? 'Include deeper tactical notes in analysis text.' : 'Keep analysis practical and concise.',
-			this.languageInstruction(language),
-			this.strictLanguageInstruction(language),
-		].join(' ');
+		const systemPrompt = this.buildActionReviewSystemPrompt({
+			language,
+			includePremiumAnalysis: premium,
+		});
 
 		const userPrompt = JSON.stringify(
 			{
@@ -1185,14 +1193,11 @@ export class AiService {
 					const missingRaw = await this.runProvider({
 						provider,
 						model,
-						systemPrompt: [
-							'You are AIPOT poker coach.',
-							'Return strict JSON only.',
-							'Must include every order listed in requiredOrders with no omissions.',
-							'Schema: {"actions":[{"order":number,"analysis":string,"evBb":number,"heroEquity":number,"mix":{"check":number,"call":number,"fold":number,"raise":number,"allIn":number}}]}',
-							this.languageInstruction(language),
-							this.strictLanguageInstruction(language),
-						].join(' '),
+						systemPrompt: this.buildActionReviewSystemPrompt({
+							language,
+							includePremiumAnalysis: premium,
+							requiredOrdersOnly: true,
+						}),
 						userPrompt: missingPrompt,
 						timeoutMs: 0,
 						maxTokens: Math.min(2200, Math.max(700, missingActions.length * 220)),
