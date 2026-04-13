@@ -311,6 +311,188 @@ export class AiService {
 		return normalized;
 	}
 
+	private asObject(value: unknown): Record<string, unknown> | null {
+		if (!value || typeof value !== 'object' || Array.isArray(value)) {
+			return null;
+		}
+		return value as Record<string, unknown>;
+	}
+
+	private pickFirstString(source: Record<string, unknown> | null, keys: string[]): string {
+		if (!source) return '';
+		for (const key of keys) {
+			const raw = source[key];
+			if (typeof raw === 'string' && raw.trim().length > 0) {
+				return raw.trim();
+			}
+		}
+		return '';
+	}
+
+	private parsePositiveOrder(value: unknown): number | null {
+		const direct = Number(value);
+		if (Number.isInteger(direct) && direct > 0) {
+			return direct;
+		}
+
+		if (typeof value === 'string') {
+			const matched = value.match(/\d+/);
+			if (matched) {
+				const parsed = Number(matched[0]);
+				if (Number.isInteger(parsed) && parsed > 0) {
+					return parsed;
+				}
+			}
+		}
+
+		return null;
+	}
+
+	private extractActionItems(parsed: Record<string, unknown> | null): Array<Record<string, unknown>> {
+		if (!parsed) return [];
+
+		const keys = ['actions', 'reviews', 'actionReviews', 'items', 'results', 'analysisItems'];
+		for (const key of keys) {
+			const candidate = parsed[key];
+			if (Array.isArray(candidate)) {
+				return candidate
+					.map((entry) => this.asObject(entry))
+					.filter((entry): entry is Record<string, unknown> => entry !== null);
+			}
+		}
+
+		const actionObject = this.asObject(parsed.actions);
+		if (actionObject) {
+			const entries: Array<Record<string, unknown>> = [];
+			for (const [key, value] of Object.entries(actionObject)) {
+				const item = this.asObject(value);
+				if (!item) continue;
+				entries.push({ order: key, ...item });
+			}
+			if (entries.length > 0) {
+				return entries;
+			}
+		}
+
+		return [];
+	}
+
+	private buildParsedActionAnalysis(
+		item: Record<string, unknown>,
+		language: PreferredLanguage,
+	): string {
+		const analysis = this.pickFirstString(item, [
+			'analysis',
+			'review',
+			'coaching',
+			'feedback',
+			'comment',
+			'text',
+			'note',
+			'reason',
+		]);
+		const betterLine = this.pickFirstString(item, ['betterLine', 'better', 'alternativeLine']);
+		const verdict = this.pickFirstString(item, ['verdict', 'grade', 'evaluation']);
+		const score = Number(item.score ?? item.rating ?? NaN);
+
+		const betterLineLabel = this.localizedText(language, {
+			en: 'Better line',
+			ko: '더 나은 라인',
+			ja: 'より良いライン',
+		});
+		const verdictLabel = this.localizedText(language, {
+			en: 'Verdict',
+			ko: '평가',
+			ja: '評価',
+		});
+		const neutralText = this.localizedText(language, {
+			en: 'neutral',
+			ko: '중립',
+			ja: '中立',
+		});
+
+		const chunks: string[] = [];
+		if (analysis) chunks.push(analysis);
+		if (betterLine) chunks.push(`${betterLineLabel}: ${betterLine}`);
+		if (verdict || Number.isFinite(score)) {
+			const scoreLabel = Number.isFinite(score) ? ` (${score})` : '';
+			chunks.push(`${verdictLabel}: ${verdict || neutralText}${scoreLabel}`);
+		}
+
+		return chunks.join('\n').trim();
+	}
+
+	private localFallbackActionAnalysis(
+		action: {
+			order: number;
+			playerId: string;
+			action: string;
+			amount: number;
+			potAfter: number;
+			street: string;
+		},
+		heroPlayerId: string,
+		language: PreferredLanguage,
+	): string {
+		const isHeroAction = heroPlayerId.length > 0 && action.playerId === heroPlayerId;
+		const actionLabel = action.action.toUpperCase();
+		const amountLabel = action.amount > 0 ? ` $${action.amount}` : '';
+
+		if (language === PreferredLanguage.KO) {
+			if (isHeroAction) {
+				return `액션 #${action.order}: ${action.street}에서 히어로 ${actionLabel}${amountLabel}. 현재 포트 $${action.potAfter} 기준으로 베팅 사이즈와 다음 스트리트 플랜의 일관성을 점검하세요. EV/에퀴티 수치가 불완전할 때는 포지션 우위와 리스크 관리 중심으로 라인을 재정렬하는 것이 안전합니다.`;
+			}
+			return `액션 #${action.order}: ${action.street}에서 상대 ${actionLabel}${amountLabel}. 이 구간은 상대 카드 추정보다 히어로의 대응 빈도(콜/폴드/레이즈) 조절이 핵심입니다. 포트오즈와 남은 스택을 기준으로 다음 노드 대응 라인을 선택하세요.`;
+		}
+
+		if (language === PreferredLanguage.JA) {
+			if (isHeroAction) {
+				return `アクション #${action.order}: ${action.street} でヒーロー ${actionLabel}${amountLabel}。現在のポット $${action.potAfter} を基準に、ベットサイズと次ストリート計画の整合性を確認してください。EV/エクイティが不十分な場合は、ポジション優位とリスク管理を優先してラインを再調整するのが安全です。`;
+			}
+			return `アクション #${action.order}: ${action.street} で相手 ${actionLabel}${amountLabel}。この局面では相手ハンド推測より、ヒーローの対応頻度（コール/フォールド/レイズ）調整が重要です。ポットオッズと残りスタックを基準に次ノードの対応ラインを選択してください。`;
+		}
+
+		if (isHeroAction) {
+			return `Action #${action.order}: Hero ${actionLabel}${amountLabel} on ${action.street}. Re-check sizing and next-street planning against the current pot ($${action.potAfter}). When EV/equity is uncertain, prioritize position leverage and risk control for a cleaner line.`;
+		}
+		return `Action #${action.order}: Opponent ${actionLabel}${amountLabel} on ${action.street}. Focus on hero response frequencies (call/fold/raise) rather than hidden-card assumptions. Choose the next line using pot odds and remaining stack depth.`;
+	}
+
+	private parseNarrativeActionReviews(raw: string): Map<number, string> {
+		const result = new Map<number, string>();
+		if (typeof raw !== 'string' || raw.trim().length === 0) {
+			return result;
+		}
+
+		const normalized = raw.replace(/\r\n/g, '\n');
+		const markers: Array<{ order: number; index: number }> = [];
+		const markerRegex = /(?:^|\n)\s*(?:action|액션|アクション|step|order)?\s*#?\s*(\d{1,3})\s*[:.)-]\s*/gi;
+		let match: RegExpExecArray | null;
+		while ((match = markerRegex.exec(normalized)) !== null) {
+			const order = Number(match[1]);
+			if (!Number.isInteger(order) || order <= 0) continue;
+			markers.push({ order, index: match.index });
+		}
+
+		if (markers.length === 0) {
+			return result;
+		}
+
+		for (let index = 0; index < markers.length; index += 1) {
+			const current = markers[index];
+			const next = markers[index + 1];
+			const start = current.index;
+			const end = next ? next.index : normalized.length;
+			const block = normalized.slice(start, end).trim();
+			if (!block) continue;
+			if (!result.has(current.order)) {
+				result.set(current.order, block);
+			}
+		}
+
+		return result;
+	}
+
 	private async callOpenAICompatible(options: {
 		baseUrl: string;
 		apiKey?: string;
@@ -900,67 +1082,51 @@ export class AiService {
 			});
 
 			const parsed = this.extractJson(raw);
+			const summaryText = this.pickFirstString(parsed, [
+				'summary',
+				'overview',
+				'handSummary',
+				'message',
+			]);
 			const summary =
-				typeof parsed?.summary === 'string' && parsed.summary.trim().length > 0
-					? parsed.summary.trim()
+				summaryText.length > 0
+					? summaryText
 					: this.localizedText(language, {
 						en: 'Hand-wide action review has been generated.',
 						ko: '핸드 전체 액션 평가가 생성되었습니다.',
 						ja: 'ハンド全体のアクション評価を生成しました。',
 					});
 
-			const parsedActions = Array.isArray(parsed?.actions)
-				? (parsed.actions as Array<Record<string, unknown>>)
-				: [];
+			const parsedActions = this.extractActionItems(parsed);
 			const byOrder = new Map<
 				number,
 				{ analysis: string; evBb: number; heroEquity: number; gtoMix: GtoActionMix }
 			>();
 
 			for (const item of parsedActions) {
-				const order = Number(item.order ?? NaN);
-				if (!Number.isInteger(order) || order < 1) continue;
+				const order = this.parsePositiveOrder(
+					item.order ?? item.actionOrder ?? item.step ?? item.index ?? item.no ?? item.id,
+				);
+				if (!order) continue;
 
-				const analysis = String(item.analysis ?? '').trim();
-				const verdict = String(item.verdict ?? '').trim();
-				const score = Number(item.score ?? NaN);
+				const analysis = this.buildParsedActionAnalysis(item, language);
 				const evBb = this.normalizeEvBb(
-					item.evBb ?? item.ev_bb ?? item.ev ?? item.evScore ?? score,
+					item.evBb ?? item.ev_bb ?? item.ev ?? item.evScore ?? item.score,
 				);
 				const heroEquity = this.normalizeEquity(
-					item.heroEquity ?? item.hero_equity ?? item.equity ?? item.winRate,
+					item.heroEquity ??
+						item.hero_equity ??
+						item.equity ??
+						item.winRate ??
+						item.win_rate,
 				);
 				const gtoMix = this.normalizeGtoMix(
-					item.mix ?? item.frequency ?? item.frequencies,
+					item.mix ?? item.frequency ?? item.frequencies ?? item.gtoMix,
 				);
-				const betterLine = String(item.betterLine ?? '').trim();
-				const betterLineLabel = this.localizedText(language, {
-					en: 'Better line',
-					ko: '더 나은 라인',
-					ja: 'より良いライン',
-				});
-				const verdictLabel = this.localizedText(language, {
-					en: 'Verdict',
-					ko: '평가',
-					ja: '評価',
-				});
-				const neutralText = this.localizedText(language, {
-					en: 'neutral',
-					ko: '중립',
-					ja: '中立',
-				});
-
-				const chunks: string[] = [];
-				if (analysis) chunks.push(analysis);
-				if (betterLine) chunks.push(`${betterLineLabel}: ${betterLine}`);
-				if (verdict || Number.isFinite(score)) {
-					const scoreLabel = Number.isFinite(score) ? ` (${score})` : '';
-					chunks.push(`${verdictLabel}: ${verdict || neutralText}${scoreLabel}`);
-				}
 
 				byOrder.set(order, {
 					analysis:
-						chunks.join('\n').trim() ||
+						analysis ||
 						this.localizedText(language, {
 							en: 'No detailed text was provided for this action.',
 							ko: '해당 액션에 대한 상세 텍스트가 제공되지 않았습니다.',
@@ -972,15 +1138,128 @@ export class AiService {
 				});
 			}
 
+			if (byOrder.size === 0) {
+				const narrativeByOrder = this.parseNarrativeActionReviews(raw);
+				for (const action of actions) {
+					const analysis = narrativeByOrder.get(action.order);
+					if (!analysis) continue;
+					byOrder.set(action.order, {
+						analysis,
+						evBb: 0,
+						heroEquity: 50,
+						gtoMix: this.actionHeuristicMix(action.action),
+					});
+				}
+			}
+
+			const missingActions = actions.filter((action) => !byOrder.has(action.order));
+			if (missingActions.length > 0) {
+				try {
+					const missingPrompt = JSON.stringify(
+						{
+							handId: dto.handId,
+							outputLanguage: language,
+							requiredOrders: missingActions.map((action) => action.order),
+							hero: {
+								playerId: heroParticipant?.playerId ?? null,
+								userId: heroParticipant?.userId ?? dto.heroUserId ?? null,
+								displayName: heroParticipant?.displayName ?? 'Hero',
+								position: heroPosition ?? null,
+								holeCards: heroParticipant?.holeCards ?? [],
+							},
+							boardCards: context.boardCards ?? [],
+							participants: participants.map((participant) => ({
+								seatId: participant.seatId,
+								displayName: participant.displayName,
+								roleType: participant.roleType,
+								isHero: heroPlayerId.length > 0 && participant.playerId === heroPlayerId,
+							})),
+							actions: perspectiveActions.filter((action) =>
+								missingActions.some((target) => target.order === action.order),
+							),
+						},
+						null,
+						2,
+					);
+
+					const missingRaw = await this.runProvider({
+						provider,
+						model,
+						systemPrompt: [
+							'You are AIPOT poker coach.',
+							'Return strict JSON only.',
+							'Must include every order listed in requiredOrders with no omissions.',
+							'Schema: {"actions":[{"order":number,"analysis":string,"evBb":number,"heroEquity":number,"mix":{"check":number,"call":number,"fold":number,"raise":number,"allIn":number}}]}',
+							this.languageInstruction(language),
+							this.strictLanguageInstruction(language),
+						].join(' '),
+						userPrompt: missingPrompt,
+						timeoutMs: 0,
+						maxTokens: Math.min(2200, Math.max(700, missingActions.length * 220)),
+					});
+
+					const missingParsed = this.extractJson(missingRaw);
+					const missingItems = this.extractActionItems(missingParsed);
+					for (const item of missingItems) {
+						const order = this.parsePositiveOrder(
+							item.order ??
+								item.actionOrder ??
+								item.step ??
+								item.index ??
+								item.no ??
+								item.id,
+						);
+						if (!order || byOrder.has(order)) continue;
+
+						const analysis = this.buildParsedActionAnalysis(item, language);
+						byOrder.set(order, {
+							analysis:
+								analysis ||
+								this.localizedText(language, {
+									en: 'No detailed text was provided for this action.',
+									ko: '해당 액션에 대한 상세 텍스트가 제공되지 않았습니다.',
+									ja: 'このアクションに対する詳細テキストは提供されませんでした。',
+								}),
+							evBb: this.normalizeEvBb(
+								item.evBb ?? item.ev_bb ?? item.ev ?? item.evScore ?? item.score,
+							),
+							heroEquity: this.normalizeEquity(
+								item.heroEquity ??
+									item.hero_equity ??
+									item.equity ??
+									item.winRate ??
+									item.win_rate,
+							),
+							gtoMix: this.normalizeGtoMix(
+								item.mix ?? item.frequency ?? item.frequencies ?? item.gtoMix,
+							),
+						});
+					}
+
+					const stillMissing = actions.filter((action) => !byOrder.has(action.order));
+					if (stillMissing.length > 0) {
+						const narrativeByOrder = this.parseNarrativeActionReviews(missingRaw);
+						for (const action of stillMissing) {
+							const analysis = narrativeByOrder.get(action.order);
+							if (!analysis) continue;
+							byOrder.set(action.order, {
+								analysis,
+								evBb: 0,
+								heroEquity: 50,
+								gtoMix: this.actionHeuristicMix(action.action),
+							});
+						}
+					}
+				} catch {
+					// Keep already parsed results; remaining holes will be filled by deterministic local fallback text.
+				}
+			}
+
 			const reviews = actions.map((action) => ({
 				order: action.order,
 				analysis:
 					byOrder.get(action.order)?.analysis ??
-					this.localizedText(language, {
-						en: `Action #${action.order}: ${action.action.toUpperCase()} / ${action.street} - Generated a default review.`,
-						ko: `액션 #${action.order}: ${action.action.toUpperCase()} / ${action.street} - 기본 리뷰를 생성했습니다.`,
-						ja: `アクション #${action.order}: ${action.action.toUpperCase()} / ${action.street} - デフォルトレビューを生成しました。`,
-					}),
+					this.localFallbackActionAnalysis(action, heroPlayerId, language),
 				evBb: byOrder.get(action.order)?.evBb ?? 0,
 				heroEquity: byOrder.get(action.order)?.heroEquity ?? 50,
 				gtoMix: byOrder.get(action.order)?.gtoMix ?? this.actionHeuristicMix(action.action),
