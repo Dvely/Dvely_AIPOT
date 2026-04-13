@@ -52,16 +52,21 @@ interface HandActionAnalysisRecord {
   createdAt: string;
 }
 
-interface HandAnalyzeResponse {
+type HandAnalyzeJobStatus = "idle" | "pending" | "running" | "completed" | "failed";
+
+interface HandAnalyzeQueueResponse {
   handId: string;
-  provider: "local" | "openai" | "claude" | "gemini";
-  model: string;
-  summary: string;
-  actions: Array<{
-    order: number;
-    analysis: string;
-    createdAt: string;
-  }>;
+  requestId: string;
+  status: "queued" | "already-running";
+  message?: string;
+}
+
+interface HandAnalyzeStatusResponse {
+  handId: string;
+  requestId?: string;
+  status: HandAnalyzeJobStatus;
+  summary?: string;
+  message?: string;
 }
 
 interface HandReviewAction {
@@ -97,6 +102,12 @@ interface HandReviewRecord {
   resultPot: number;
   analyses?: HandActionAnalysisRecord[];
   favoriteUserIds?: string[];
+  analyzeJob?: {
+    requestId: string;
+    status: Exclude<HandAnalyzeJobStatus, "idle">;
+    summary?: string;
+    message?: string;
+  };
   createdAt: string;
 }
 
@@ -351,6 +362,8 @@ export function HandReview() {
   const [handAnalyzeBusy, setHandAnalyzeBusy] = useState(false);
   const [analysisSummary, setAnalysisSummary] = useState("");
   const [analysisError, setAnalysisError] = useState("");
+  const [analyzeStatus, setAnalyzeStatus] = useState<HandAnalyzeJobStatus>("idle");
+  const [pollingHandId, setPollingHandId] = useState<string | null>(null);
   const [stepAnalysisMap, setStepAnalysisMap] = useState<Record<number, string>>({});
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -400,7 +413,120 @@ export function HandReview() {
       map[step.order] = step.analysis;
     }
     setStepAnalysisMap(map);
+  }, [selectedHand]);
+
+  const upsertHandFromRecord = (record: HandReviewRecord) => {
+    const mapped = toHandHistory(record, viewerUserId);
+    const isCurrentSelected = selectedHand?.id === mapped.id;
+
+    setHands((prev) => {
+      const exists = prev.some((hand) => hand.id === mapped.id);
+      if (!exists) {
+        return [mapped, ...prev];
+      }
+      return prev.map((hand) => (hand.id === mapped.id ? mapped : hand));
+    });
+
+    if (isCurrentSelected) {
+      setSelectedHand(mapped);
+      setStepIdx((prev) => Math.min(prev, Math.max(mapped.steps.length - 1, 0)));
+    }
+  };
+
+  const refreshHandFromServer = async (handId: string) => {
+    const detail = await apiFetch<HandReviewRecord>(`/hand-review/hands/${handId}`);
+    upsertHandFromRecord(detail);
+  };
+
+  const applyAnalyzeStatus = (status: HandAnalyzeStatusResponse) => {
+    setAnalyzeStatus(status.status);
+
+    const summary = status.summary?.trim();
+    const message = status.message?.trim();
+
+    if (summary) {
+      setAnalysisSummary(summary);
+    } else if (message && status.status !== "failed") {
+      setAnalysisSummary(message);
+    }
+
+    if (status.status === "failed") {
+      setAnalysisError(message || t("Background analysis failed. Try again."));
+      return;
+    }
+
+    setAnalysisError("");
+  };
+
+  useEffect(() => {
+    if (!selectedHand) return;
+
+    const syncAnalyzeStatus = async () => {
+      try {
+        const status = await apiFetch<HandAnalyzeStatusResponse>(
+          `/hand-review/hands/${selectedHand.id}/analyze-status`,
+        );
+        applyAnalyzeStatus(status);
+
+        if (status.status === "pending" || status.status === "running") {
+          setPollingHandId(selectedHand.id);
+          return;
+        }
+
+        if (status.status === "completed") {
+          await refreshHandFromServer(selectedHand.id);
+        }
+
+        setPollingHandId((prev) => (prev === selectedHand.id ? null : prev));
+      } catch {
+        // 분석 상태 조회 실패는 주 기능을 막지 않도록 무시합니다.
+      }
+    };
+
+    void syncAnalyzeStatus();
   }, [selectedHand?.id]);
+
+  useEffect(() => {
+    if (!pollingHandId) return;
+
+    let cancelled = false;
+
+    const pollAnalyzeStatus = async () => {
+      try {
+        const status = await apiFetch<HandAnalyzeStatusResponse>(
+          `/hand-review/hands/${pollingHandId}/analyze-status`,
+        );
+        if (cancelled) return;
+
+        if (selectedHand?.id === pollingHandId) {
+          applyAnalyzeStatus(status);
+        }
+
+        if (status.status === "completed") {
+          await refreshHandFromServer(pollingHandId);
+          if (cancelled) return;
+          setPollingHandId(null);
+          return;
+        }
+
+        if (status.status === "failed") {
+          setPollingHandId(null);
+        }
+      } catch {
+        if (cancelled) return;
+      }
+    };
+
+    void pollAnalyzeStatus();
+    const timer = window.setInterval(() => {
+      void pollAnalyzeStatus();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [pollingHandId, selectedHand?.id, viewerUserId]);
 
   const toggleFavorite = async (handId: string, nextFavorite: boolean) => {
     try {
@@ -433,13 +559,15 @@ export function HandReview() {
   };
 
   const analyzeWholeHand = async () => {
-    if (!selectedHand || handAnalyzeBusy) return;
+    const analyzeInProgress =
+      handAnalyzeBusy || analyzeStatus === "pending" || analyzeStatus === "running";
+    if (!selectedHand || analyzeInProgress) return;
 
     setHandAnalyzeBusy(true);
-    setAnalysisSummary("");
     setAnalysisError("");
+    setAnalysisSummary(t("Submitting analysis request..."));
     try {
-      const response = await apiFetch<HandAnalyzeResponse>(
+      const response = await apiFetch<HandAnalyzeQueueResponse>(
         `/hand-review/hands/${selectedHand.id}/analyze`,
         {
           method: "POST",
@@ -452,46 +580,12 @@ export function HandReview() {
         },
       );
 
-      const nextMap = response.actions.reduce<Record<number, string>>((acc, item) => {
-        acc[item.order] = item.analysis;
-        return acc;
-      }, {});
-      setStepAnalysisMap((prev) => ({ ...prev, ...nextMap }));
-
-      setSelectedHand((prev) => {
-        if (!prev || prev.id !== response.handId) return prev;
-        return {
-          ...prev,
-          steps: prev.steps.map((step) =>
-            step.order !== null && nextMap[step.order]
-              ? {
-                  ...step,
-                  analysis: nextMap[step.order],
-                }
-              : step,
-          ),
-        };
-      });
-
-      setHands((prev) =>
-        prev.map((hand) =>
-          hand.id !== response.handId
-            ? hand
-            : {
-                ...hand,
-                steps: hand.steps.map((step) =>
-                  step.order !== null && nextMap[step.order]
-                    ? {
-                        ...step,
-                        analysis: nextMap[step.order],
-                      }
-                    : step,
-                ),
-              },
-        ),
+      setAnalyzeStatus(response.status === "already-running" ? "running" : "pending");
+      setPollingHandId(response.handId);
+      setAnalysisSummary(
+        response.message?.trim() ||
+          t("Analysis request accepted. It runs in background and will be saved automatically."),
       );
-
-      setAnalysisSummary(response.summary?.trim() ?? "");
     } catch (error) {
       setAnalysisError(error instanceof Error ? error.message : t("Failed to analyze hand."));
     } finally {
@@ -605,6 +699,11 @@ export function HandReview() {
                 </button>
               </div>
             </div>
+            {pollingHandId && (
+              <div className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-cyan-100 text-sm font-semibold">
+                {t("Background analysis in progress. You can leave this screen.")}
+              </div>
+            )}
             {loading && <p className="text-slate-300 font-semibold">{t("Loading hands...")}</p>}
             {!loading && errorMessage && (
               <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-300 font-semibold">
@@ -679,6 +778,8 @@ export function HandReview() {
   // --- Step-by-Step Detail View ---
   const currentStep = selectedHand.steps[stepIdx];
   const isShowdown = currentStep.street === "Showdown";
+  const analyzeInProgress =
+    handAnalyzeBusy || analyzeStatus === "pending" || analyzeStatus === "running";
   const currentStepAnalysis =
     currentStep.order !== null
       ? (stepAnalysisMap[currentStep.order] ?? currentStep.analysis)
@@ -730,15 +831,20 @@ export function HandReview() {
             onClick={() => {
               void analyzeWholeHand();
             }}
-            disabled={handAnalyzeBusy}
+            disabled={analyzeInProgress}
             className="px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider border border-orange-500/40 bg-orange-500/20 text-orange-300 hover:bg-orange-500/30 disabled:opacity-60 flex items-center gap-1"
           >
             <BrainCircuit className="w-3 h-3" />
-            {handAnalyzeBusy ? t("Analyzing") : t("Analyze Hand")}
+            {analyzeInProgress ? t("Analyzing in Background") : t("Analyze Hand")}
           </button>
           <div className="bg-orange-500/20 text-orange-400 px-3 py-1 rounded-full font-mono text-xs font-bold border border-orange-500/30 flex items-center gap-2 uppercase tracking-wider">
             <Target className="w-3 h-3" /> {t("Step Analysis")}
           </div>
+          {(analyzeStatus === "pending" || analyzeStatus === "running") && (
+            <div className="bg-cyan-500/15 text-cyan-200 px-3 py-1 rounded-full text-[11px] font-bold border border-cyan-400/30">
+              {t("Background analysis in progress. You can leave this screen.")}
+            </div>
+          )}
         </div>
       </header>
 

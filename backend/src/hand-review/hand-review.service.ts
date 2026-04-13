@@ -1,7 +1,16 @@
-import { Injectable } from '@nestjs/common';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import {
+	BadRequestException,
+	ForbiddenException,
+	Injectable,
+	Logger,
+} from '@nestjs/common';
 import { AiService } from '../ai/ai.service';
-import { JwtUserPayload, UserRecord } from '../common/domain.types';
+import {
+	HandReviewAnalyzeJob,
+	JwtUserPayload,
+	UserRecord,
+} from '../common/domain.types';
 import { PreferredLanguage } from '../common/enums/language.enum';
 import { UserRole } from '../common/enums/role.enum';
 import { LlmProvider } from '../common/enums/room.enum';
@@ -9,10 +18,10 @@ import { StoreService } from '../store/store.service';
 import { UsersService } from '../users/users.service';
 import { AnalyzeHandDto } from './dto/analyze-hand.dto';
 
-const HAND_ANALYZE_FALLBACK_TIMEOUT_MS = 12000;
-
 @Injectable()
 export class HandReviewService {
+	private readonly logger = new Logger(HandReviewService.name);
+
 	constructor(
 		private readonly store: StoreService,
 		private readonly aiService: AiService,
@@ -65,69 +74,191 @@ export class HandReviewService {
 		};
 	}
 
-	async analyze(user: JwtUserPayload, handId: string, dto: AnalyzeHandDto) {
+	getAnalyzeStatus(user: JwtUserPayload, handId: string) {
 		const account = this.assertCanRead(user);
+		this.store.getHandReview(handId, user.sub);
 
-		const hand = this.store.getHandReview(handId, user.sub);
-		const language = dto.language ?? account.preferredLanguage;
-		const fallback = {
-			provider: dto.provider ?? LlmProvider.LOCAL,
-			model: dto.model ?? 'fallback-local',
-			summary: this.localizedText(language, {
-				en: 'Generated fallback action reviews due to analyzer timeout.',
-				ko: '분석기 타임아웃으로 폴백 액션 리뷰를 생성했습니다.',
-				ja: 'アナライザーのタイムアウトによりフォールバックレビューを生成しました。',
-			}),
-			reviews: hand.actions.map((action) => ({
-				order: action.order,
-				analysis: this.localizedText(language, {
-					en: `Action #${action.order}: ${action.action.toUpperCase()} / ${action.street} - Fallback review generated due to timeout.`,
-					ko: `액션 #${action.order}: ${action.action.toUpperCase()} / ${action.street} - 타임아웃으로 폴백 리뷰를 생성했습니다.`,
-					ja: `アクション #${action.order}: ${action.action.toUpperCase()} / ${action.street} - タイムアウトによりフォールバックレビューを生成しました。`,
-				}),
-			})),
-		};
-
-		let result = fallback;
-		try {
-			result = await Promise.race([
-				this.aiService.analyzeAllHandActions({
-					handId,
-					handContext: hand,
-					provider: dto.provider,
-					model: dto.model,
-					includePremiumAnalysis: dto.includePremiumAnalysis ?? true,
-					language,
-				}),
-				new Promise<typeof fallback>((resolve) => {
-					setTimeout(() => resolve(fallback), HAND_ANALYZE_FALLBACK_TIMEOUT_MS);
-				}),
-			]);
-		} catch {
-			result = fallback;
-		}
-
-		const saved = result.reviews.map((review) =>
-			this.store.addHandActionAnalysis({
+		const job = this.store.getHandReviewAnalyzeJob(handId, user.sub);
+		if (!job) {
+			return {
 				handId,
-				userId: user.sub,
-				actionOrder: review.order,
-				provider: result.provider ?? dto.provider ?? LlmProvider.LOCAL,
-				model: result.model ?? dto.model ?? 'local-default',
-				analysis: review.analysis,
-			}),
-		);
+				status: 'idle' as const,
+				message: this.localizedText(account.preferredLanguage, {
+					en: 'No hand analysis job is running.',
+					ko: '현재 실행 중인 핸드 분석 작업이 없습니다.',
+					ja: '現在実行中のハンド分析ジョブはありません。',
+				}),
+			};
+		}
 
 		return {
 			handId,
-			provider: result.provider,
-			model: result.model,
-			summary: result.summary,
-			actions: saved.map((item) => ({
-				order: item.actionOrder,
-				analysis: item.analysis,
-				createdAt: item.createdAt,
-			})),
+			...job,
+		};
+	}
+
+	private async runQueuedAnalyzeJob(params: {
+		handId: string;
+		userId: string;
+		provider: LlmProvider;
+		model: string;
+		includePremiumAnalysis: boolean;
+		language: PreferredLanguage;
+		requestId: string;
+		requestedAt: string;
+	}) {
+		const runningAt = new Date().toISOString();
+		const runningJob: HandReviewAnalyzeJob = {
+			requestId: params.requestId,
+			status: 'running',
+			requestedByUserId: params.userId,
+			provider: params.provider,
+			model: params.model,
+			includePremiumAnalysis: params.includePremiumAnalysis,
+			language: params.language,
+			requestedAt: params.requestedAt,
+			startedAt: runningAt,
+			message: this.localizedText(params.language, {
+				en: 'Analysis is running in the background.',
+				ko: '분석이 백그라운드에서 진행 중입니다.',
+				ja: '分析はバックグラウンドで進行中です。',
+			}),
+		};
+		this.store.setHandReviewAnalyzeJob({
+			handId: params.handId,
+			userId: params.userId,
+			job: runningJob,
+		});
+
+		try {
+			const hand = this.store.getHandReview(params.handId, params.userId);
+			const result = await this.aiService.analyzeAllHandActions({
+				handId: params.handId,
+				handContext: hand,
+				provider: params.provider,
+				model: params.model,
+				includePremiumAnalysis: params.includePremiumAnalysis,
+				language: params.language,
+			});
+
+			for (const review of result.reviews) {
+				this.store.addHandActionAnalysis({
+					handId: params.handId,
+					userId: params.userId,
+					actionOrder: review.order,
+					provider: result.provider ?? params.provider,
+					model: result.model ?? params.model,
+					analysis: review.analysis,
+				});
+			}
+
+			const finishedAt = new Date().toISOString();
+			const completedJob: HandReviewAnalyzeJob = {
+				...runningJob,
+				provider: result.provider ?? params.provider,
+				model: result.model ?? params.model,
+				status: 'completed',
+				finishedAt,
+				summary: result.summary,
+				message: this.localizedText(params.language, {
+					en: 'Hand analysis is complete. You can view the saved result anytime.',
+					ko: '핸드 분석이 완료되었습니다. 저장된 결과를 언제든 확인할 수 있습니다.',
+					ja: 'ハンド分析が完了しました。保存された結果はいつでも確認できます。',
+				}),
+			};
+			this.store.setHandReviewAnalyzeJob({
+				handId: params.handId,
+				userId: params.userId,
+				job: completedJob,
+			});
+		} catch (error) {
+			this.logger.warn(
+				`Hand analyze job failed. handId=${params.handId} requestId=${params.requestId}`,
+				error instanceof Error ? error.stack : undefined,
+			);
+			const finishedAt = new Date().toISOString();
+			const failedJob: HandReviewAnalyzeJob = {
+				...runningJob,
+				status: 'failed',
+				finishedAt,
+				message: this.localizedText(params.language, {
+					en: 'Background hand analysis failed. Please try again.',
+					ko: '백그라운드 핸드 분석에 실패했습니다. 다시 시도해 주세요.',
+					ja: 'バックグラウンドのハンド分析に失敗しました。再試行してください。',
+				}),
+			};
+			this.store.setHandReviewAnalyzeJob({
+				handId: params.handId,
+				userId: params.userId,
+				job: failedJob,
+			});
+		}
+	}
+
+	async analyze(user: JwtUserPayload, handId: string, dto: AnalyzeHandDto) {
+		const account = this.assertCanRead(user);
+		this.store.getHandReview(handId, user.sub);
+
+		const existingJob = this.store.getHandReviewAnalyzeJob(handId, user.sub);
+		if (existingJob && (existingJob.status === 'pending' || existingJob.status === 'running')) {
+			return {
+				handId,
+				requestId: existingJob.requestId,
+				status: 'already-running' as const,
+				message:
+					existingJob.message ??
+					this.localizedText(account.preferredLanguage, {
+						en: 'Analysis is already running in the background.',
+						ko: '이미 분석이 백그라운드에서 진행 중입니다.',
+						ja: '分析はすでにバックグラウンドで実行中です。',
+					}),
+			};
+		}
+
+		const provider = dto.provider ?? LlmProvider.LOCAL;
+		const model = dto.model ?? 'local-default';
+		const includePremiumAnalysis = dto.includePremiumAnalysis ?? true;
+		const language = dto.language ?? account.preferredLanguage;
+		const requestId = randomUUID();
+		const requestedAt = new Date().toISOString();
+
+		const queuedJob: HandReviewAnalyzeJob = {
+			requestId,
+			status: 'pending',
+			requestedByUserId: user.sub,
+			provider,
+			model,
+			includePremiumAnalysis,
+			language,
+			requestedAt,
+			message: this.localizedText(language, {
+				en: 'Analysis request accepted. It will continue in the background.',
+				ko: '분석 요청이 접수되었습니다. 백그라운드에서 계속 진행됩니다.',
+				ja: '分析リクエストを受け付けました。バックグラウンドで継続します。',
+			}),
+		};
+		this.store.setHandReviewAnalyzeJob({
+			handId,
+			userId: user.sub,
+			job: queuedJob,
+		});
+
+		void this.runQueuedAnalyzeJob({
+			handId,
+			userId: user.sub,
+			provider,
+			model,
+			includePremiumAnalysis,
+			language,
+			requestId,
+			requestedAt,
+		});
+
+		return {
+			handId,
+			requestId,
+			status: 'queued' as const,
+			message: queuedJob.message,
 		};
 	}
 
@@ -161,22 +292,17 @@ export class HandReviewService {
 
 		let result = fallback;
 		try {
-			result = await Promise.race([
-				this.aiService.analyzeHandReview({
-					handId,
-					handContext: {
-						...hand,
-						focusAction: targetAction,
-					},
-					provider: dto.provider,
-					model: dto.model,
-					includePremiumAnalysis: dto.includePremiumAnalysis ?? true,
-					language,
-				}),
-				new Promise<typeof fallback>((resolve) => {
-					setTimeout(() => resolve(fallback), HAND_ANALYZE_FALLBACK_TIMEOUT_MS);
-				}),
-			]);
+			result = await this.aiService.analyzeHandReview({
+				handId,
+				handContext: {
+					...hand,
+					focusAction: targetAction,
+				},
+				provider: dto.provider,
+				model: dto.model,
+				includePremiumAnalysis: dto.includePremiumAnalysis ?? true,
+				language,
+			});
 		} catch {
 			result = fallback;
 		}

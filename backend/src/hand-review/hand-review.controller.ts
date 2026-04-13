@@ -44,8 +44,17 @@ export class HandReviewController {
 		return this.handReviewService.getHand(user, handId);
 	}
 
+	@Get('hands/:handId/analyze-status')
+	@ApiOperation({ summary: '핸드 분석 비동기 작업 상태 조회(PRO)' })
+	getAnalyzeStatus(
+		@CurrentUser() user: JwtUserPayload,
+		@Param('handId') handId: string,
+	) {
+		return this.handReviewService.getAnalyzeStatus(user, handId);
+	}
+
 	@Post('hands/:handId/analyze')
-	@ApiOperation({ summary: '플레이 전체 액션 일괄 평가 및 저장(PRO)' })
+	@ApiOperation({ summary: '플레이 전체 액션 일괄 평가 비동기 요청 및 저장(PRO)' })
 	analyze(
 		@CurrentUser() user: JwtUserPayload,
 		@Param('handId') handId: string,

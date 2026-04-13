@@ -208,6 +208,7 @@ export interface HandReviewRecord {
   resultPot: number;
   analyses?: HandActionAnalysis[];
   favoriteUserIds?: string[];
+  analyzeJob?: HandReviewAnalyzeJob;
   createdAt: string;
 }
 
@@ -223,6 +224,23 @@ export interface HandActionAnalysis {
   analysis: string;
   createdByUserId: string;
   createdAt: string;
+}
+
+export type HandReviewAnalyzeStatus = 'pending' | 'running' | 'completed' | 'failed';
+
+export interface HandReviewAnalyzeJob {
+  requestId: string;
+  status: HandReviewAnalyzeStatus;
+  requestedByUserId: string;
+  provider: LlmProvider;
+  model: string;
+  includePremiumAnalysis: boolean;
+  language: PreferredLanguage;
+  requestedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  summary?: string;
+  message?: string;
 }
 
 export interface AiBotDecision {
