@@ -177,8 +177,15 @@ export class RoomsService {
 	leaveRoom(user: JwtUserPayload, roomId: string) {
 		const room = this.store.getRoomDetail(roomId);
 		const seated = room.seats.find((seat) => seat.participant?.userId === user.sub);
-		if (!seated) return room;
-		return this.store.leaveSeat(roomId, seated.seatId, user.sub);
+		if (seated) {
+			return this.store.leaveSeat(roomId, seated.seatId, user.sub);
+		}
+
+		try {
+			return this.store.cancelPendingJoin(roomId, user.sub);
+		} catch {
+			return room;
+		}
 	}
 
 	closeRoom(user: JwtUserPayload, roomId: string) {
@@ -203,6 +210,18 @@ export class RoomsService {
 
 	leaveSeat(user: JwtUserPayload, roomId: string, seatId: number) {
 		return this.store.leaveSeat(roomId, seatId, user.sub);
+	}
+
+	sitOut(user: JwtUserPayload, roomId: string, seatId: number) {
+		return this.store.setSeatSittingOut(roomId, seatId, user.sub, true);
+	}
+
+	sitIn(user: JwtUserPayload, roomId: string, seatId: number) {
+		return this.store.setSeatSittingOut(roomId, seatId, user.sub, false);
+	}
+
+	cancelWaiting(user: JwtUserPayload, roomId: string) {
+		return this.store.cancelPendingJoin(roomId, user.sub);
 	}
 
 	addBot(user: JwtUserPayload, roomId: string, seatId: number, dto: AddBotDto) {

@@ -102,6 +102,35 @@ export class RoomsController {
 		return this.roomsService.leaveSeat(user, roomId, seatId);
 	}
 
+	@Post(':roomId/seats/:seatId/sit-out')
+	@ApiOperation({ summary: '좌석 유지 관전(sit out)' })
+	sitOut(
+		@CurrentUser() user: JwtUserPayload,
+		@Param('roomId') roomId: string,
+		@Param('seatId', ParseIntPipe) seatId: number,
+	) {
+		return this.roomsService.sitOut(user, roomId, seatId);
+	}
+
+	@Post(':roomId/seats/:seatId/sit-in')
+	@ApiOperation({ summary: '관전 해제 후 플레이 복귀(sit in)' })
+	sitIn(
+		@CurrentUser() user: JwtUserPayload,
+		@Param('roomId') roomId: string,
+		@Param('seatId', ParseIntPipe) seatId: number,
+	) {
+		return this.roomsService.sitIn(user, roomId, seatId);
+	}
+
+	@Post(':roomId/waiting/cancel')
+	@ApiOperation({ summary: '입장 대기 취소' })
+	cancelWaiting(
+		@CurrentUser() user: JwtUserPayload,
+		@Param('roomId') roomId: string,
+	) {
+		return this.roomsService.cancelWaiting(user, roomId);
+	}
+
 	@Post(':roomId/seats/:seatId/bot')
 	@ApiOperation({ summary: '빈 좌석에 봇 추가' })
 	addBot(

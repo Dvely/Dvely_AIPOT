@@ -23,13 +23,16 @@ import { PreferredLanguage } from '../common/enums/language.enum';
 import { UserRole } from '../common/enums/role.enum';
 import {
 	AvatarConfig,
+	FriendRequestRecord,
 	GameState,
 	HandActionAnalysis,
 	HandAction,
 	HandReviewParticipant,
 	HandReviewRecord,
 	LeaderboardEntry,
+	PendingJoinRequest,
 	PlayerState,
+	RoomInviteRecord,
 	RoomRecord,
 	TableSummary,
 	UserRecord,
@@ -118,11 +121,15 @@ const DEFAULT_ACCOUNT_BALANCE = 10000;
 const DEFAULT_GUEST_BALANCE = 1000;
 const PRIVATE_AI_BOT_NEXT_HAND_DELAY_MS = 2500;
 const MAX_TIMEOUT_STRIKES_BEFORE_AUTO_LEAVE = 3;
+const STALE_PUBLIC_ROOM_DELETE_MS = 5 * 60 * 1000;
+const ROOM_INVITE_EXPIRE_MS = 10 * 60 * 1000;
 
 @Injectable()
 export class StoreService implements OnModuleInit, OnModuleDestroy {
 	private readonly users = new Map<string, UserRecord>();
 	private readonly userNicknameIndex = new Map<string, string>();
+	private readonly friendRequests = new Map<string, FriendRequestRecord>();
+	private readonly roomInvites = new Map<string, RoomInviteRecord>();
 	private readonly rooms = new Map<string, RoomRecord>();
 	private readonly handReviews = new Map<string, HandReviewRecord>();
 	private readonly turnTimeoutSec = 15;
@@ -141,7 +148,10 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		this.timeoutTicker = setInterval(() => {
 			let dirty = false;
 			for (const room of this.rooms.values()) {
-				if (this.shouldDeleteRoomWithoutHumans(room)) {
+				if (
+					this.shouldDeleteRoomWithoutHumans(room) ||
+					this.shouldDeleteStalePublicWaitingRoom(room)
+				) {
 					this.rooms.delete(room.id);
 					dirty = true;
 					continue;
@@ -194,6 +204,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 	private snapshotPayload() {
 		return {
 			users: Array.from(this.users.values()),
+			friendRequests: Array.from(this.friendRequests.values()),
+			roomInvites: Array.from(this.roomInvites.values()),
 			rooms: Array.from(this.rooms.values()),
 			handReviews: Array.from(this.handReviews.values()),
 			roomSeeded: this.roomSeeded,
@@ -209,6 +221,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		try {
 			const parsed = JSON.parse(snapshot.payload) as {
 				users?: UserRecord[];
+				friendRequests?: FriendRequestRecord[];
+				roomInvites?: RoomInviteRecord[];
 				rooms?: RoomRecord[];
 				handReviews?: HandReviewRecord[];
 				roomSeeded?: boolean;
@@ -216,6 +230,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
 			this.users.clear();
 			this.userNicknameIndex.clear();
+			this.friendRequests.clear();
+			this.roomInvites.clear();
 			this.rooms.clear();
 			this.handReviews.clear();
 
@@ -224,6 +240,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 					...user,
 					preferredLanguage:
 						user.preferredLanguage ?? PreferredLanguage.EN,
+					friendIds: Array.isArray(user.friendIds)
+						? Array.from(new Set(user.friendIds.filter((id) => typeof id === 'string')))
+						: [],
 					balanceAmount: Number.isFinite(user.balanceAmount)
 						? user.balanceAmount
 						: this.defaultBalanceForRole(user.role),
@@ -234,13 +253,25 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 					normalizedUser.id,
 				);
 			}
+			for (const request of parsed.friendRequests ?? []) {
+				if (!request?.id) continue;
+				this.friendRequests.set(request.id, request);
+			}
+			for (const invite of parsed.roomInvites ?? []) {
+				if (!invite?.id) continue;
+				this.roomInvites.set(invite.id, invite);
+			}
 			for (const room of parsed.rooms ?? []) {
+				room.pendingJoins = Array.isArray(room.pendingJoins)
+					? room.pendingJoins.filter((join) => !!join?.userId)
+					: [];
 				for (const seat of room.seats) {
 					if (!seat.participant) continue;
 					seat.participant.timeoutStrikeCount = Math.max(
 						0,
 						Math.floor(seat.participant.timeoutStrikeCount ?? 0),
 					);
+					seat.participant.sittingOut = !!seat.participant.sittingOut;
 				}
 				this.rooms.set(room.id, room);
 			}
@@ -313,6 +344,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 				totalProfit: 0,
 			},
 			subscriptionActive: params.role === 'pro',
+			friendIds: [],
 			createdAt: new Date().toISOString(),
 		};
 
@@ -412,8 +444,157 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		).length;
 	}
 
+	private countActiveParticipants(room: RoomRecord): number {
+		return room.seats.filter(
+			(seat) => seat.participant && !seat.participant.sittingOut,
+		).length;
+	}
+
+	private isRoomEditableStatus(status: RoomStatus): boolean {
+		return (
+			status === RoomStatus.WAITING_SETUP ||
+			status === RoomStatus.READY ||
+			status === RoomStatus.HAND_ENDED
+		);
+	}
+
+	private ensurePendingJoinList(room: RoomRecord): PendingJoinRequest[] {
+		room.pendingJoins = room.pendingJoins ?? [];
+		return room.pendingJoins;
+	}
+
+	private queuePendingJoin(
+		room: RoomRecord,
+		request: Omit<PendingJoinRequest, 'createdAt'>,
+	) {
+		const queue = this.ensurePendingJoinList(room);
+		const existingIdx = queue.findIndex((item) => item.userId === request.userId);
+		if (existingIdx >= 0) {
+			const current = queue[existingIdx];
+			queue[existingIdx] = {
+				...current,
+				...request,
+				createdAt: current.createdAt,
+			};
+			return;
+		}
+
+		queue.push({
+			...request,
+			createdAt: new Date().toISOString(),
+		});
+	}
+
+	private removePendingJoin(room: RoomRecord, userId: string): boolean {
+		const queue = this.ensurePendingJoinList(room);
+		const before = queue.length;
+		room.pendingJoins = queue.filter((item) => item.userId !== userId);
+		return room.pendingJoins.length !== before;
+	}
+
+	private createHumanParticipantFromPending(
+		seatId: number,
+		request: PendingJoinRequest,
+	): PlayerState {
+		return {
+			seatId,
+			playerId: request.userId,
+			userId: request.userId,
+			roleType: ParticipantType.HUMAN,
+			displayName: request.displayName,
+			stackAmount: Math.max(0, Math.floor(request.stackAmount)),
+			currentBetAmount: 0,
+			folded: false,
+			allIn: false,
+			connected: true,
+			timeoutStrikeCount: 0,
+			sittingOut: false,
+			avatarInfo: request.avatarInfo,
+			holeCards: [],
+		};
+	}
+
+	private pickPendingJoinSeat(room: RoomRecord, preferredSeatId?: number) {
+		if (preferredSeatId) {
+			const preferredSeat = room.seats.find((seat) => seat.seatId === preferredSeatId);
+			if (preferredSeat && !preferredSeat.participant) {
+				return preferredSeat;
+			}
+		}
+
+		return room.seats.find((seat) => !seat.participant) ?? null;
+	}
+
+	private processPendingJoins(room: RoomRecord): boolean {
+		if (!this.isRoomEditableStatus(room.status)) {
+			return false;
+		}
+
+		const queue = this.ensurePendingJoinList(room);
+		if (queue.length === 0) {
+			return false;
+		}
+
+		let changed = false;
+		const nextQueue: PendingJoinRequest[] = [];
+
+		for (const request of queue) {
+			const seated = room.seats.find(
+				(seat) => seat.participant?.userId === request.userId,
+			)?.participant;
+			if (seated) {
+				if (seated.sittingOut) {
+					seated.sittingOut = false;
+					seated.folded = false;
+					seated.allIn = false;
+					seated.holeCards = [];
+					changed = true;
+				}
+				continue;
+			}
+
+			const seat = this.pickPendingJoinSeat(room, request.preferredSeatId);
+			if (!seat) {
+				nextQueue.push(request);
+				continue;
+			}
+
+			seat.participant = this.createHumanParticipantFromPending(seat.seatId, request);
+			changed = true;
+		}
+
+		room.pendingJoins = nextQueue;
+		if (changed) {
+			this.setReadyState(room);
+		}
+
+		return changed;
+	}
+
 	private shouldDeleteRoomWithoutHumans(room: RoomRecord): boolean {
-		return this.countHumanParticipants(room) === 0;
+		if (this.countHumanParticipants(room) > 0) {
+			return false;
+		}
+		return this.ensurePendingJoinList(room).length === 0;
+	}
+
+	private shouldDeleteStalePublicWaitingRoom(room: RoomRecord): boolean {
+		if (room.isPrivate) {
+			return false;
+		}
+		if (room.status !== RoomStatus.WAITING_SETUP) {
+			return false;
+		}
+		if (room.gameState) {
+			return false;
+		}
+
+		const createdAtMs = Date.parse(room.createdAt);
+		if (!Number.isFinite(createdAtMs)) {
+			return false;
+		}
+
+		return Date.now() - createdAtMs >= STALE_PUBLIC_ROOM_DELETE_MS;
 	}
 
 	private isSyntheticNickname(nickname: string): boolean {
@@ -444,6 +625,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		}
 
 		let changed = false;
+		if (this.processPendingJoins(room)) {
+			changed = true;
+		}
 		const isPrivateAiBotRoom = room.isPrivate && room.type === RoomType.AI_BOT;
 
 		if (room.status === RoomStatus.HAND_ENDED) {
@@ -471,7 +655,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			changed = true;
 
 			if (isPrivateAiBotRoom) {
-				const seated = room.seats.filter((seat) => seat.participant);
+				const seated = room.seats.filter(
+					(seat) => seat.participant && !seat.participant.sittingOut,
+				);
 				if (seated.length >= 2) {
 					room.status = RoomStatus.DEALING;
 					room.gameState = this.createInitialGameState(
@@ -489,7 +675,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			(room.status === RoomStatus.READY || room.status === RoomStatus.WAITING_SETUP) &&
 			!room.gameState
 		) {
-			const seated = room.seats.filter((seat) => seat.participant);
+			const seated = room.seats.filter(
+				(seat) => seat.participant && !seat.participant.sittingOut,
+			);
 			if (seated.length >= 2) {
 				room.status = RoomStatus.DEALING;
 				room.gameState = this.createInitialGameState(
@@ -523,8 +711,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			hasBeenPublic: room.hasBeenPublic,
 			canJoin:
 				room.status !== RoomStatus.CLOSED &&
-				currentPlayers < room.maxSeats &&
-				room.status !== RoomStatus.DEALING,
+				currentPlayers < room.maxSeats,
 		};
 	}
 
@@ -545,11 +732,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 	}
 
 	private assertRoomEditable(room: RoomRecord) {
-		if (
-			room.status !== RoomStatus.WAITING_SETUP &&
-			room.status !== RoomStatus.READY &&
-			room.status !== RoomStatus.HAND_ENDED
-		) {
+		if (!this.isRoomEditableStatus(room.status)) {
 			throw new BadRequestException(
 				'핸드 진행 중에는 좌석 구성 또는 봇 구성을 변경할 수 없습니다.',
 			);
@@ -568,7 +751,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 	}
 
 	private setReadyState(room: RoomRecord) {
-		const players = this.countParticipants(room);
+		const players = this.countActiveParticipants(room);
 		if (room.status === RoomStatus.CLOSED) return;
 		if (players >= 2 && room.status !== RoomStatus.HAND_ENDED) {
 			room.status = RoomStatus.READY;
@@ -611,6 +794,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			blindSmall,
 			blindBig,
 			seats: this.createEmptySeats(maxSeats),
+			pendingJoins: [],
 			gameState: null,
 			lastDealerSeatId: null,
 			createdAt: new Date().toISOString(),
@@ -628,6 +812,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			allIn: false,
 			connected: true,
 			timeoutStrikeCount: 0,
+			sittingOut: false,
 			avatarInfo: params.hostAvatar,
 			holeCards: [],
 		};
@@ -668,6 +853,300 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		return this.ensureRoom(roomId);
 	}
 
+	private ensureUser(userId: string): UserRecord {
+		const user = this.users.get(userId);
+		if (!user) {
+			throw new NotFoundException('사용자를 찾을 수 없습니다.');
+		}
+		return user;
+	}
+
+	private ensureFriendLink(a: UserRecord, b: UserRecord) {
+		a.friendIds = Array.from(new Set(a.friendIds ?? []));
+		b.friendIds = Array.from(new Set(b.friendIds ?? []));
+		if (!a.friendIds.includes(b.id)) {
+			a.friendIds.push(b.id);
+		}
+		if (!b.friendIds.includes(a.id)) {
+			b.friendIds.push(a.id);
+		}
+	}
+
+	searchUsersByNickname(query: string, requesterUserId: string) {
+		const requester = this.ensureUser(requesterUserId);
+		const normalized = this.normalizeNickname(query);
+		if (!normalized) {
+			return [];
+		}
+
+		return Array.from(this.users.values())
+			.filter((user) => user.id !== requester.id)
+			.filter((user) => this.normalizeNickname(user.nickname).includes(normalized))
+			.slice(0, 20)
+			.map((user) => ({
+				id: user.id,
+				nickname: user.nickname,
+				role: user.role,
+				isFriend: requester.friendIds.includes(user.id),
+			}));
+	}
+
+	listFriends(userId: string) {
+		const user = this.ensureUser(userId);
+		return user.friendIds
+			.map((friendId) => this.users.get(friendId))
+			.filter((friend): friend is UserRecord => !!friend)
+			.map((friend) => ({
+				id: friend.id,
+				nickname: friend.nickname,
+				role: friend.role,
+			}));
+	}
+
+	listIncomingFriendRequests(userId: string) {
+		this.ensureUser(userId);
+		return Array.from(this.friendRequests.values())
+			.filter((request) => request.status === 'pending')
+			.filter((request) => request.targetUserId === userId)
+			.map((request) => {
+				const requester = this.users.get(request.requesterUserId);
+				return {
+					id: request.id,
+					requesterUserId: request.requesterUserId,
+					requesterNickname: requester?.nickname ?? 'Unknown',
+					createdAt: request.createdAt,
+				};
+			});
+	}
+
+	listOutgoingFriendRequests(userId: string) {
+		this.ensureUser(userId);
+		return Array.from(this.friendRequests.values())
+			.filter((request) => request.status === 'pending')
+			.filter((request) => request.requesterUserId === userId)
+			.map((request) => {
+				const target = this.users.get(request.targetUserId);
+				return {
+					id: request.id,
+					targetUserId: request.targetUserId,
+					targetNickname: target?.nickname ?? 'Unknown',
+					createdAt: request.createdAt,
+				};
+			});
+	}
+
+	createFriendRequestByNickname(requesterUserId: string, targetNickname: string) {
+		const requester = this.ensureUser(requesterUserId);
+		const target = this.findUserByNickname(targetNickname);
+		if (!target) {
+			throw new NotFoundException('대상 사용자를 찾을 수 없습니다.');
+		}
+		if (target.id === requester.id) {
+			throw new BadRequestException('본인에게 친구 요청을 보낼 수 없습니다.');
+		}
+		if (requester.friendIds.includes(target.id)) {
+			throw new BadRequestException('이미 친구로 등록된 사용자입니다.');
+		}
+
+		const existingPending = Array.from(this.friendRequests.values()).find(
+			(request) =>
+				request.status === 'pending' &&
+				((request.requesterUserId === requester.id &&
+					request.targetUserId === target.id) ||
+					(request.requesterUserId === target.id &&
+						request.targetUserId === requester.id)),
+		);
+		if (existingPending) {
+			throw new BadRequestException('이미 처리 대기 중인 친구 요청이 있습니다.');
+		}
+
+		const next: FriendRequestRecord = {
+			id: randomUUID(),
+			requesterUserId: requester.id,
+			targetUserId: target.id,
+			status: 'pending',
+			createdAt: new Date().toISOString(),
+		};
+
+		this.friendRequests.set(next.id, next);
+		this.markDirty();
+		return next;
+	}
+
+	respondFriendRequest(targetUserId: string, requestId: string, accept: boolean) {
+		const target = this.ensureUser(targetUserId);
+		const request = this.friendRequests.get(requestId);
+		if (!request) {
+			throw new NotFoundException('친구 요청을 찾을 수 없습니다.');
+		}
+		if (request.targetUserId !== target.id) {
+			throw new BadRequestException('본인에게 온 친구 요청만 처리할 수 있습니다.');
+		}
+		if (request.status !== 'pending') {
+			throw new BadRequestException('이미 처리된 친구 요청입니다.');
+		}
+
+		if (accept) {
+			const requester = this.ensureUser(request.requesterUserId);
+			this.ensureFriendLink(requester, target);
+			request.status = 'accepted';
+		} else {
+			request.status = 'declined';
+		}
+		request.respondedAt = new Date().toISOString();
+		this.friendRequests.set(request.id, request);
+		this.markDirty();
+		return request;
+	}
+
+	private expireRoomInvites() {
+		let dirty = false;
+		const now = Date.now();
+
+		for (const invite of this.roomInvites.values()) {
+			if (invite.status !== 'pending') continue;
+
+			const createdAtMs = Date.parse(invite.createdAt);
+			const room = this.rooms.get(invite.roomId);
+			const shouldExpireByTime =
+				Number.isFinite(createdAtMs) && now - createdAtMs > ROOM_INVITE_EXPIRE_MS;
+			const shouldExpireByRoom =
+				!room || room.status === RoomStatus.CLOSED || !room.isPrivate;
+
+			if (!shouldExpireByTime && !shouldExpireByRoom) {
+				continue;
+			}
+
+			invite.status = 'expired';
+			invite.respondedAt = new Date().toISOString();
+			this.roomInvites.set(invite.id, invite);
+			dirty = true;
+		}
+
+		if (dirty) {
+			this.markDirty();
+		}
+	}
+
+	listRoomInvites(userId: string) {
+		this.ensureUser(userId);
+		this.expireRoomInvites();
+
+		return Array.from(this.roomInvites.values())
+			.filter((invite) => invite.status === 'pending')
+			.filter((invite) => invite.inviteeUserId === userId)
+			.map((invite) => {
+				const inviter = this.users.get(invite.inviterUserId);
+				const room = this.rooms.get(invite.roomId);
+				return {
+					id: invite.id,
+					roomId: invite.roomId,
+					roomName: room?.name ?? 'Unknown Room',
+					roomType: room?.type ?? RoomType.CASH,
+					inviterUserId: invite.inviterUserId,
+					inviterNickname: inviter?.nickname ?? 'Unknown',
+					createdAt: invite.createdAt,
+				};
+			});
+	}
+
+	sendRoomInvite(inviterUserId: string, roomId: string, inviteeUserId: string) {
+		const inviter = this.ensureUser(inviterUserId);
+		const invitee = this.ensureUser(inviteeUserId);
+		if (inviter.id === invitee.id) {
+			throw new BadRequestException('본인에게는 초대할 수 없습니다.');
+		}
+		if (!inviter.friendIds.includes(invitee.id)) {
+			throw new BadRequestException('친구 관계인 사용자만 초대할 수 있습니다.');
+		}
+
+		const room = this.ensureRoom(roomId);
+		if (!room.isPrivate || room.status === RoomStatus.CLOSED) {
+			throw new BadRequestException('비공개 룸에서만 초대를 보낼 수 있습니다.');
+		}
+
+		const inviterSeated = room.seats.some(
+			(seat) => seat.participant?.userId === inviter.id,
+		);
+		if (!inviterSeated) {
+			throw new BadRequestException('해당 룸에 착석한 사용자만 초대할 수 있습니다.');
+		}
+
+		const inviteeSeated = room.seats.some(
+			(seat) => seat.participant?.userId === invitee.id,
+		);
+		if (inviteeSeated) {
+			throw new BadRequestException('이미 해당 룸에 입장한 사용자입니다.');
+		}
+
+		this.expireRoomInvites();
+		const existing = Array.from(this.roomInvites.values()).find(
+			(invite) =>
+				invite.status === 'pending' &&
+				invite.roomId === room.id &&
+				invite.inviteeUserId === invitee.id,
+		);
+		if (existing) {
+			throw new BadRequestException('이미 처리 대기 중인 룸 초대가 있습니다.');
+		}
+
+		const invite: RoomInviteRecord = {
+			id: randomUUID(),
+			roomId: room.id,
+			inviterUserId: inviter.id,
+			inviteeUserId: invitee.id,
+			status: 'pending',
+			createdAt: new Date().toISOString(),
+		};
+		this.roomInvites.set(invite.id, invite);
+		this.markDirty();
+		return invite;
+	}
+
+	respondRoomInvite(inviteeUserId: string, inviteId: string, accept: boolean) {
+		const invitee = this.ensureUser(inviteeUserId);
+		this.expireRoomInvites();
+
+		const invite = this.roomInvites.get(inviteId);
+		if (!invite) {
+			throw new NotFoundException('룸 초대를 찾을 수 없습니다.');
+		}
+		if (invite.inviteeUserId !== invitee.id) {
+			throw new BadRequestException('본인에게 온 룸 초대만 처리할 수 있습니다.');
+		}
+		if (invite.status !== 'pending') {
+			throw new BadRequestException('이미 처리된 룸 초대입니다.');
+		}
+
+		if (!accept) {
+			invite.status = 'declined';
+			invite.respondedAt = new Date().toISOString();
+			this.roomInvites.set(invite.id, invite);
+			this.markDirty();
+			return this.ensureRoom(invite.roomId);
+		}
+
+		const room = this.ensureRoom(invite.roomId);
+		if (!room.isPrivate || room.status === RoomStatus.CLOSED) {
+			throw new BadRequestException('유효하지 않은 비공개 룸 초대입니다.');
+		}
+
+		const joined = this.joinRoomFirstEmptySeat({
+			roomId: room.id,
+			userId: invitee.id,
+			displayName: invitee.nickname,
+			avatar: invitee.avatar,
+			stackAmount: invitee.balanceAmount,
+		});
+
+		invite.status = 'accepted';
+		invite.respondedAt = new Date().toISOString();
+		this.roomInvites.set(invite.id, invite);
+		this.markDirty();
+
+		return joined;
+	}
+
 	findRoomByCode(code: string): RoomRecord {
 		const room = Array.from(this.rooms.values()).find(
 			(item) => item.code === code.toUpperCase(),
@@ -692,8 +1171,31 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
 		const alreadySeated = room.seats.find(
 			(seat) => seat.participant?.userId === params.userId,
-		);
+		)?.participant;
 		if (alreadySeated) {
+			if (alreadySeated.sittingOut) {
+				if (this.isRoomEditableStatus(room.status)) {
+					alreadySeated.sittingOut = false;
+					alreadySeated.folded = false;
+					alreadySeated.allIn = false;
+					alreadySeated.holeCards = [];
+					this.removePendingJoin(room, params.userId);
+					this.setReadyState(room);
+				} else {
+					this.queuePendingJoin(room, {
+						userId: params.userId,
+						displayName: params.displayName,
+						avatarInfo: params.avatar,
+						stackAmount: alreadySeated.stackAmount,
+						preferredSeatId: alreadySeated.seatId,
+					});
+				}
+				this.markDirty();
+			}
+
+			if (this.removePendingJoin(room, params.userId)) {
+				this.markDirty();
+			}
 			return room;
 		}
 
@@ -702,23 +1204,27 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			throw new BadRequestException('빈 좌석이 없습니다.');
 		}
 
-		seat.participant = {
-			seatId: seat.seatId,
-			playerId: params.userId,
-			userId: params.userId,
-			roleType: ParticipantType.HUMAN,
-			displayName: params.displayName,
-			stackAmount: Math.max(0, Math.floor(params.stackAmount)),
-			currentBetAmount: 0,
-			folded: false,
-			allIn: false,
-			connected: true,
-			timeoutStrikeCount: 0,
-			avatarInfo: params.avatar,
-			holeCards: [],
-		};
+		if (this.isRoomEditableStatus(room.status)) {
+			seat.participant = this.createHumanParticipantFromPending(seat.seatId, {
+				userId: params.userId,
+				displayName: params.displayName,
+				avatarInfo: params.avatar,
+				stackAmount: params.stackAmount,
+				preferredSeatId: seat.seatId,
+				createdAt: new Date().toISOString(),
+			});
+			this.removePendingJoin(room, params.userId);
+			this.setReadyState(room);
+		} else {
+			this.queuePendingJoin(room, {
+				userId: params.userId,
+				displayName: params.displayName,
+				avatarInfo: params.avatar,
+				stackAmount: params.stackAmount,
+				preferredSeatId: seat.seatId,
+			});
+		}
 
-		this.setReadyState(room);
 		this.markDirty();
 		return room;
 	}
@@ -732,37 +1238,73 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		stackAmount: number;
 	}): RoomRecord {
 		const room = this.ensureRoom(params.roomId);
-		this.assertRoomEditable(room);
+		const existing = room.seats.find(
+			(seat) => seat.participant?.userId === params.userId,
+		);
+		if (existing) {
+			if (existing.seatId !== params.seatId) {
+				throw new BadRequestException('이미 다른 좌석에 착석 중입니다.');
+			}
+
+			const participant = existing.participant;
+			if (!participant) {
+				throw new BadRequestException('좌석 상태를 확인할 수 없습니다.');
+			}
+
+			if (!participant.sittingOut) {
+				if (this.removePendingJoin(room, params.userId)) {
+					this.markDirty();
+				}
+				return room;
+			}
+
+			if (this.isRoomEditableStatus(room.status)) {
+				participant.sittingOut = false;
+				participant.folded = false;
+				participant.allIn = false;
+				participant.holeCards = [];
+				this.removePendingJoin(room, params.userId);
+				this.setReadyState(room);
+			} else {
+				this.queuePendingJoin(room, {
+					userId: params.userId,
+					displayName: params.displayName,
+					avatarInfo: params.avatar,
+					stackAmount: participant.stackAmount,
+					preferredSeatId: params.seatId,
+				});
+			}
+
+			this.markDirty();
+			return room;
+		}
 
 		const targetSeat = this.ensureSeat(room, params.seatId);
 		if (targetSeat.participant) {
 			throw new ConflictException('이미 사용 중인 좌석입니다.');
 		}
 
-		const existing = room.seats.find(
-			(seat) => seat.participant?.userId === params.userId,
-		);
-		if (existing) {
-			throw new BadRequestException('이미 다른 좌석에 착석 중입니다.');
+		if (this.isRoomEditableStatus(room.status)) {
+			targetSeat.participant = this.createHumanParticipantFromPending(params.seatId, {
+				userId: params.userId,
+				displayName: params.displayName,
+				avatarInfo: params.avatar,
+				stackAmount: params.stackAmount,
+				preferredSeatId: params.seatId,
+				createdAt: new Date().toISOString(),
+			});
+			this.removePendingJoin(room, params.userId);
+			this.setReadyState(room);
+		} else {
+			this.queuePendingJoin(room, {
+				userId: params.userId,
+				displayName: params.displayName,
+				avatarInfo: params.avatar,
+				stackAmount: params.stackAmount,
+				preferredSeatId: params.seatId,
+			});
 		}
 
-		targetSeat.participant = {
-			seatId: params.seatId,
-			playerId: params.userId,
-			userId: params.userId,
-			roleType: ParticipantType.HUMAN,
-			displayName: params.displayName,
-			stackAmount: Math.max(0, Math.floor(params.stackAmount)),
-			currentBetAmount: 0,
-			folded: false,
-			allIn: false,
-			connected: true,
-			timeoutStrikeCount: 0,
-			avatarInfo: params.avatar,
-			holeCards: [],
-		};
-
-		this.setReadyState(room);
 		this.markDirty();
 		return room;
 	}
@@ -794,16 +1336,103 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			this.foldSeatBeforeLeave(room, seatId);
 		}
 
+		if (participant.roleType === ParticipantType.HUMAN && participant.userId) {
+			this.removePendingJoin(room, participant.userId);
+		}
+
 		seat.participant = null;
-		if (this.countHumanParticipants(room) === 0) {
+		if (
+			this.countHumanParticipants(room) === 0 &&
+			this.ensurePendingJoinList(room).length === 0
+		) {
 			this.rooms.delete(room.id);
 			this.markDirty();
 			return room;
 		}
 
 		if (!leaveDuringHand) {
-			this.setReadyState(room);
+			if (!this.processPendingJoins(room)) {
+				this.setReadyState(room);
+			}
 		}
+		this.markDirty();
+		return room;
+	}
+
+	setSeatSittingOut(
+		roomId: string,
+		seatId: number,
+		actorUserId: string,
+		sittingOut: boolean,
+	): RoomRecord {
+		const room = this.ensureRoom(roomId);
+		const seat = this.ensureSeat(room, seatId);
+		const participant = seat.participant;
+		if (!participant || participant.roleType !== ParticipantType.HUMAN) {
+			throw new BadRequestException('사람 플레이어가 착석 중인 좌석만 변경할 수 있습니다.');
+		}
+
+		const selfControl = participant.userId === actorUserId;
+		const privateHostControl = room.isPrivate && room.hostUserId === actorUserId;
+		if (!selfControl && !privateHostControl) {
+			throw new BadRequestException('본인 좌석 또는 방장만 상태를 변경할 수 있습니다.');
+		}
+
+		if (sittingOut) {
+			if (participant.sittingOut) {
+				return room;
+			}
+
+			if (room.status === RoomStatus.IN_HAND) {
+				this.foldSeatBeforeLeave(room, seatId);
+			}
+
+			participant.sittingOut = true;
+			participant.folded = true;
+			participant.allIn = false;
+			participant.holeCards = [];
+			this.removePendingJoin(room, participant.userId!);
+
+			if (room.status !== RoomStatus.IN_HAND) {
+				this.setReadyState(room);
+			}
+
+			this.markDirty();
+			return room;
+		}
+
+		if (!participant.sittingOut) {
+			return room;
+		}
+
+		if (this.isRoomEditableStatus(room.status)) {
+			participant.sittingOut = false;
+			participant.folded = false;
+			participant.allIn = false;
+			participant.holeCards = [];
+			this.removePendingJoin(room, participant.userId!);
+			this.setReadyState(room);
+		} else {
+			this.queuePendingJoin(room, {
+				userId: participant.userId!,
+				displayName: participant.displayName,
+				avatarInfo: participant.avatarInfo ?? null,
+				stackAmount: participant.stackAmount,
+				preferredSeatId: seatId,
+			});
+		}
+
+		this.markDirty();
+		return room;
+	}
+
+	cancelPendingJoin(roomId: string, userId: string): RoomRecord {
+		const room = this.ensureRoom(roomId);
+		const removed = this.removePendingJoin(room, userId);
+		if (!removed) {
+			throw new BadRequestException('현재 입장 대기 상태가 아닙니다.');
+		}
+
 		this.markDirty();
 		return room;
 	}
@@ -857,6 +1486,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			state.street = HandStreet.RESULT;
 			state.currentTurnSeatId = null;
 			state.actionTimerDeadline = null;
+			this.processPendingJoins(room);
 			this.markDirty();
 			return;
 		}
@@ -905,6 +1535,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			allIn: false,
 			connected: true,
 			timeoutStrikeCount: 0,
+			sittingOut: false,
 			avatarInfo: this.createRandomBotAvatar(),
 			holeCards: [],
 			botConfig: params.config,
@@ -947,7 +1578,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		}
 
 		seat.participant = null;
-		this.setReadyState(room);
+		if (!this.processPendingJoins(room)) {
+			this.setReadyState(room);
+		}
 		this.markDirty();
 		return room;
 	}
@@ -991,6 +1624,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
 		room.isPrivate = false;
 		room.hasBeenPublic = true;
+		room.createdAt = new Date().toISOString();
 		this.markDirty();
 		return room;
 	}
@@ -1015,6 +1649,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			throw new BadRequestException('공개 룸은 자동으로 핸드를 시작합니다.');
 		}
 		this.assertHostControlAllowed(room, actorUserId);
+		this.processPendingJoins(room);
 
 		if (
 			room.status !== RoomStatus.WAITING_SETUP &&
@@ -1024,7 +1659,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			throw new BadRequestException('현재 상태에서는 게임을 시작할 수 없습니다.');
 		}
 
-		const seated = room.seats.filter((seat) => seat.participant);
+		const seated = room.seats.filter(
+			(seat) => seat.participant && !seat.participant.sittingOut,
+		);
 		if (seated.length < 2) {
 			throw new BadRequestException('최소 2명 이상 착석해야 시작할 수 있습니다.');
 		}
@@ -1072,7 +1709,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 
 		const actingSeat = this.ensureSeat(room, state.currentTurnSeatId);
 		const actor = actingSeat.participant;
-		if (!actor || actor.folded || actor.allIn) {
+		if (!actor || actor.sittingOut || actor.folded || actor.allIn) {
 			const nextSeatId = this.nextTurnSeatId(room, state.currentTurnSeatId);
 			state.currentTurnSeatId = nextSeatId;
 			state.actionTimerDeadline = nextSeatId
@@ -1110,6 +1747,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		return room.seats
 			.map((seat) => seat.participant)
 			.filter((participant): participant is PlayerState => !!participant)
+			.filter((participant) => !participant.sittingOut)
 			.filter((participant) => !participant.folded);
 	}
 
@@ -1130,6 +1768,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		for (const seatId of loop) {
 			const participant = this.ensureSeat(room, seatId).participant;
 			if (!participant) continue;
+			if (participant.sittingOut) continue;
 			if (participant.folded) continue;
 			if (participant.allIn) continue;
 			return seatId;
@@ -1168,6 +1807,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		const active = room.seats
 			.map((seat) => seat.participant)
 			.filter((participant): participant is PlayerState => !!participant)
+			.filter((participant) => !participant.sittingOut)
 			.filter((participant) => !participant.folded);
 		if (active.length <= 1) return false;
 
@@ -1518,6 +2158,8 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			});
 		}
 
+		this.processPendingJoins(room);
+
 		this.markDirty();
 	}
 
@@ -1528,7 +2170,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		const actives = room.seats
 			.map((seat) => seat.participant)
 			.filter((p): p is PlayerState => !!p)
-			.filter((p) => !p.folded && !p.allIn);
+			.filter((p) => !p.sittingOut && !p.folded && !p.allIn);
 
 		if (actives.length <= 1) return true;
 
@@ -1573,6 +2215,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			? room.seats.find(
 					(seat) =>
 						seat.participant?.seatId === state.lastAggressiveSeatId &&
+						!seat.participant.sittingOut &&
 						!seat.participant.folded &&
 						!seat.participant.allIn,
 				)
@@ -1620,7 +2263,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		if (state.currentTurnSeatId !== actor.seatId) {
 			throw new BadRequestException('현재 턴 플레이어가 아닙니다.');
 		}
-		if (actor.folded || actor.allIn) {
+		if (actor.sittingOut || actor.folded || actor.allIn) {
 			throw new BadRequestException('액션 가능한 플레이어 상태가 아닙니다.');
 		}
 
@@ -1780,7 +2423,9 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			seat.participant.folded = false;
 			seat.participant.allIn = false;
 		});
-		this.setReadyState(room);
+		if (!this.processPendingJoins(room)) {
+			this.setReadyState(room);
+		}
 		this.markDirty();
 		return room;
 	}
@@ -2048,6 +2693,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 				blindSmall: 50,
 				blindBig: 100,
 				seats: this.createEmptySeats(maxSeats),
+				pendingJoins: [],
 				gameState: null,
 				createdAt: new Date().toISOString(),
 			};
@@ -2064,6 +2710,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 					allIn: false,
 					connected: true,
 					timeoutStrikeCount: 0,
+					sittingOut: false,
 					avatarInfo: null,
 					holeCards: [],
 					botConfig: {

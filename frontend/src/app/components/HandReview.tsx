@@ -319,12 +319,11 @@ type AnalysisProvider = "local" | "openai" | "claude" | "gemini";
 
 const ANALYSIS_MODELS: Record<AnalysisProvider, Array<{ label: string; value: string }>> = {
   local: [
-    { label: "Qwen 2.5 Coder", value: "qwen2.5-coder:3b" },
-    { label: "EXAONE Deep", value: "exaone-deep:2.4b" },
+    { label: "Local Qwen3 8B", value: "qwen3:8b" },
+    { label: "Local Qwen 2.5 Coder", value: "qwen2.5-coder:3b" },
   ],
   openai: [
-    { label: "GPT-4.1 mini", value: "gpt-4.1-mini" },
-    { label: "GPT-4.1", value: "gpt-4.1" },
+    { label: "OpenAI GPT-4.1 mini", value: "gpt-4.1-mini" },
   ],
   claude: [
     { label: "Claude 3.5 Sonnet", value: "claude-3-5-sonnet-latest" },

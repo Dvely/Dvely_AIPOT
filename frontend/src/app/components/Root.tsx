@@ -1,7 +1,8 @@
-import { Outlet } from "react-router";
+import { Outlet, useLocation } from "react-router";
 import { useEffect, useState } from "react";
 import { RotateCw } from "lucide-react";
 import { useI18n } from "../i18n";
+import { audioManager } from "../audio";
 
 const PHONE_MAX_SHORT_EDGE = 500;
 const PHONE_MAX_LONG_EDGE = 1000;
@@ -23,9 +24,16 @@ function isPortraitOrientation() {
 }
 
 export function Root() {
+  const location = useLocation();
   const [isPortrait, setIsPortrait] = useState(false);
   const [isPhoneLandscape, setIsPhoneLandscape] = useState(false);
   const { t } = useI18n();
+
+  useEffect(() => {
+    const pathname = location.pathname;
+    const shouldPlayBgm = pathname !== "/" && pathname !== "/loading";
+    audioManager.setBgmEnabled(shouldPlayBgm);
+  }, [location.pathname]);
 
   useEffect(() => {
     const viewportMeta = document.querySelector<HTMLMetaElement>("meta[name='viewport']");
