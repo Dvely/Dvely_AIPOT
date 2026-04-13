@@ -298,6 +298,7 @@ export class AiService {
 		userPrompt: string;
 		timeoutMs?: number;
 		responseFormatJson?: boolean;
+		maxTokens?: number;
 	}): Promise<string> {
 		const endpoint = `${options.baseUrl.replace(/\/$/, '')}/chat/completions`;
 		const headers: Record<string, string> = {
@@ -317,6 +318,9 @@ export class AiService {
 		};
 		if (options.responseFormatJson ?? true) {
 			requestBody.response_format = { type: 'json_object' };
+		}
+		if (Number.isInteger(options.maxTokens) && (options.maxTokens ?? 0) > 0) {
+			requestBody.max_tokens = options.maxTokens;
 		}
 
 		const response = await firstValueFrom(
@@ -414,6 +418,7 @@ export class AiService {
 		systemPrompt: string;
 		userPrompt: string;
 		timeoutMs?: number;
+		maxTokens?: number;
 	}): Promise<string> {
 		if (options.provider === LlmProvider.OPENAI) {
 			const base = this.configService.get('OPENAI_BASE_URL', 'https://api.openai.com/v1');
@@ -428,6 +433,7 @@ export class AiService {
 				systemPrompt: options.systemPrompt,
 				userPrompt: options.userPrompt,
 				timeoutMs: options.timeoutMs,
+				maxTokens: options.maxTokens,
 			});
 		}
 
@@ -464,21 +470,8 @@ export class AiService {
 				systemPrompt: options.systemPrompt,
 				userPrompt: options.userPrompt,
 				timeoutMs: options.timeoutMs,
-				responseFormatJson: true,
-			});
-		} catch {
-			// Some local OpenAI-compatible servers/models reject response_format=json_object.
-		}
-
-		try {
-			return await this.callOpenAICompatible({
-				baseUrl: localBase,
-				apiKey: localKey,
-				model: options.model,
-				systemPrompt: options.systemPrompt,
-				userPrompt: options.userPrompt,
-				timeoutMs: options.timeoutMs,
 				responseFormatJson: false,
+				maxTokens: options.maxTokens,
 			});
 		} catch {
 			// Continue to fallback model attempt if requested model is unavailable.
@@ -493,6 +486,7 @@ export class AiService {
 				userPrompt: options.userPrompt,
 				timeoutMs: options.timeoutMs,
 				responseFormatJson: false,
+				maxTokens: options.maxTokens,
 			});
 		}
 
@@ -504,6 +498,7 @@ export class AiService {
 			userPrompt: options.userPrompt,
 			timeoutMs: options.timeoutMs,
 			responseFormatJson: false,
+			maxTokens: options.maxTokens,
 		});
 	}
 
@@ -726,6 +721,7 @@ export class AiService {
 				systemPrompt,
 				userPrompt,
 				timeoutMs: 0,
+				maxTokens: 700,
 			});
 		} catch {
 			analysis = this.handReviewFallback(language, premium);
@@ -745,7 +741,15 @@ export class AiService {
 		const language = this.normalizeLanguage(dto.language);
 
 		const context = dto.handContext as {
-			participants?: Array<{ seatId?: number; displayName?: string; roleType?: string }>;
+			participants?: Array<{
+				seatId?: number;
+				displayName?: string;
+				roleType?: string;
+				playerId?: string;
+				userId?: string;
+				holeCards?: string[];
+			}>;
+			positions?: Record<string, string>;
 			boardCards?: string[];
 			actions?: Array<{
 				order?: number;
@@ -762,7 +766,20 @@ export class AiService {
 			seatId: participant.seatId ?? 0,
 			displayName: participant.displayName ?? 'Unknown',
 			roleType: participant.roleType ?? 'unknown',
+			playerId: participant.playerId ?? '',
+			userId: participant.userId,
+			holeCards: Array.isArray(participant.holeCards)
+				? participant.holeCards.map((card) => String(card))
+				: [],
 		}));
+
+		const heroParticipant =
+			participants.find((participant) => participant.userId === dto.heroUserId) ??
+			null;
+		const heroPlayerId = heroParticipant?.playerId ?? '';
+		const heroPosition = heroParticipant
+			? context.positions?.[String(heroParticipant.seatId)]
+			: undefined;
 
 		const actions = (context.actions ?? [])
 			.filter((action) => Number.isInteger(action.order) && (action.order ?? 0) > 0)
@@ -775,6 +792,17 @@ export class AiService {
 				potAfter: action.potAfter ?? 0,
 				street: action.street ?? 'UNKNOWN',
 			}));
+
+		const perspectiveActions = actions.map((action) => {
+			const isHeroAction = heroPlayerId.length > 0 && action.playerId === heroPlayerId;
+			return {
+				...action,
+				actor: isHeroAction ? 'hero' : 'opponent',
+				coachingFocus: isHeroAction
+					? 'Evaluate hero action quality and better alternatives.'
+					: 'Opponent action happened. Coach hero response and adjustment from this node.',
+			};
+		});
 
 		if (actions.length === 0) {
 			return {
@@ -796,12 +824,17 @@ export class AiService {
 		}
 
 		const systemPrompt = [
-			'You are AIPOT action-by-action poker reviewer.',
-			'Evaluate each action order in the provided hand.',
+			'You are AIPOT action-by-action poker coach.',
+			'Always analyze from HERO perspective only.',
+			'Do not evaluate opponents as if they are the user.',
+			'For opponent actions, coach what HERO should do next based on hero hand, board, pot and position.',
+			'Never assume hidden opponent hole cards before showdown.',
+			'Use only public board + action history + hero cards.',
 			'Return strict JSON only.',
 			'Schema: {"summary":string,"actions":[{"order":number,"analysis":string,"verdict":"good|neutral|bad","score":-5..5,"betterLine":string,"evBb":number,"heroEquity":number,"mix":{"check":number,"call":number,"fold":number,"raise":number,"allIn":number}}]}',
 			'All mix values must be percentages and sum close to 100.',
-			'In analysis, first describe EV/equity/frequency baseline, then provide coaching advice.',
+			'In each analysis text, first describe EV/equity/frequency baseline, then provide concise coaching advice.',
+			'Keep each action analysis short (2-4 sentences).',
 			'If uncertain, still provide concise feedback per action order.',
 			premium ? 'Include deeper tactical notes in analysis text.' : 'Keep analysis practical and concise.',
 			this.languageInstruction(language),
@@ -810,9 +843,22 @@ export class AiService {
 		const userPrompt = JSON.stringify(
 			{
 				handId: dto.handId,
+				hero: {
+					playerId: heroParticipant?.playerId ?? null,
+					userId: heroParticipant?.userId ?? dto.heroUserId ?? null,
+					displayName: heroParticipant?.displayName ?? 'Hero',
+					seatId: heroParticipant?.seatId ?? null,
+					position: heroPosition ?? null,
+					holeCards: heroParticipant?.holeCards ?? [],
+				},
 				boardCards: context.boardCards ?? [],
-				participants,
-				actions,
+				participants: participants.map((participant) => ({
+					seatId: participant.seatId,
+					displayName: participant.displayName,
+					roleType: participant.roleType,
+					isHero: heroPlayerId.length > 0 && participant.playerId === heroPlayerId,
+				})),
+				actions: perspectiveActions,
 			},
 			null,
 			2,
@@ -825,6 +871,7 @@ export class AiService {
 				systemPrompt,
 				userPrompt,
 				timeoutMs: 0,
+				maxTokens: 1200,
 			});
 
 			const parsed = this.extractJson(raw);

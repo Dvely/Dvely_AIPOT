@@ -31,4 +31,9 @@ export class HandReviewRequestDto {
   @IsOptional()
   @IsEnum(PreferredLanguage)
   language?: PreferredLanguage;
+
+  @ApiPropertyOptional({ description: '히어로(요청자) 사용자 ID' })
+  @IsOptional()
+  @IsString()
+  heroUserId?: string;
 }

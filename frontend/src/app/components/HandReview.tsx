@@ -237,19 +237,27 @@ function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): H
     participantBySeat.set(participant.seatId, participant);
   }
 
-  const opponents = participants
+  const opponentsWithCards = participants
     .filter((participant) => !heroParticipant || participant.playerId !== heroParticipant.playerId)
     .map((participant) => ({
       name: participant.displayName,
       cards: participant.holeCards.map(toUiCard),
     }));
 
+  const opponentsHidden = opponentsWithCards.map((participant) => ({
+    ...participant,
+    cards: [] as string[],
+  }));
+
   const fallbackOpponents = record.participantIds.map((id, idx) => ({
     name: `P${idx + 1}`,
     cards: [] as string[],
   }));
 
-  const resolvedOpponents = opponents.length > 0 ? opponents : fallbackOpponents;
+  const resolvedOpponentsWithCards =
+    opponentsWithCards.length > 0 ? opponentsWithCards : fallbackOpponents;
+  const resolvedOpponentsHidden =
+    opponentsHidden.length > 0 ? opponentsHidden : fallbackOpponents;
   const heroCards = heroParticipant?.holeCards?.map(toUiCard) ?? [];
   const heroContribution = heroParticipant
     ? record.actions
@@ -296,7 +304,7 @@ function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): H
         pot: action.potAfter,
         board: toBoardByStreet(record.boardCards, action.street),
         heroCards,
-        opponents: resolvedOpponents,
+        opponents: resolvedOpponentsHidden,
         analysis:
           latestAnalysis?.analysis ??
           `Live action replay from room ${record.roomId.slice(0, 8)}.`,
@@ -322,7 +330,7 @@ function toHandHistory(record: HandReviewRecord, viewerUserId: string | null): H
     pot: record.resultPot,
     board: record.boardCards.map(toUiCard),
     heroCards,
-    opponents: resolvedOpponents,
+    opponents: resolvedOpponentsWithCards,
     analysis: "Showdown completed from real game data.",
     evScore: 0,
     heroEquity: 100,
@@ -931,7 +939,7 @@ export function HandReview() {
                       {opp.name}
                     </span>
                     <div className="flex gap-1 md:gap-2 justify-center">
-                       {opp.cards.length > 0 ? opp.cards.map((c, i) => (
+                       {isShowdown && opp.cards.length > 0 ? opp.cards.map((c, i) => (
                           <motion.div key={`v-${idx}-${i}`} initial={{ y: -10, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className={`w-10 h-14 md:w-14 md:h-20 bg-white rounded-md md:rounded-lg shadow-xl flex items-center justify-center text-base md:text-xl font-black border-2 border-slate-300 ${c.includes('♥') || c.includes('♦') ? 'text-red-600' : 'text-slate-900'}`}>
                             {c}
                           </motion.div>
