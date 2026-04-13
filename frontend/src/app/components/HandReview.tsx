@@ -5,7 +5,7 @@ import {
   ArrowLeft, History, PlayCircle, ChevronRight, CheckCircle2, XCircle, BrainCircuit, Target, ShieldAlert, PauseCircle, ChevronLeft, Star, Info
 } from "lucide-react";
 import { apiFetch } from "../api";
-import { getCurrentAuth, getCurrentPreferredLanguage, getCurrentUserId } from "../auth";
+import { getCurrentAuth, getCurrentUserId } from "../auth";
 import { useI18n } from "../i18n";
 
 // --- MOCK DATA ---
@@ -417,9 +417,8 @@ const ANALYSIS_MODELS: Record<AnalysisProvider, Array<{ label: string; value: st
 
 export function HandReview() {
   const navigate = useNavigate();
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const { isLoggedIn, isPro } = getCurrentAuth();
-  const preferredLanguage = getCurrentPreferredLanguage();
   const viewerUserId = getCurrentUserId();
   const [hands, setHands] = useState<HandHistory[]>([]);
   const [loading, setLoading] = useState(false);
@@ -646,7 +645,7 @@ export function HandReview() {
             provider: analysisProvider,
             model: analysisModel,
             includePremiumAnalysis: true,
-            language: preferredLanguage,
+            language,
           }),
         },
       );

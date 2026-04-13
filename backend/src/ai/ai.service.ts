@@ -117,6 +117,27 @@ export class AiService {
 		return `All user-facing text must be written in ${label} (${language}).`;
 	}
 
+	private strictLanguageInstruction(language: PreferredLanguage): string {
+		if (language === PreferredLanguage.KO) {
+			return [
+				'Output language must be Korean only.',
+				'Do not mix English or Japanese sentences.',
+				'Use Korean for poker actions (check/call/fold/raise/all-in -> 체크/콜/폴드/레이즈/올인).',
+				'Only keep technical acronyms like EV, GTO, BB in English form.',
+			].join(' ');
+		}
+
+		if (language === PreferredLanguage.JA) {
+			return [
+				'Output language must be Japanese only.',
+				'Do not mix English or Korean sentences.',
+				'Only keep technical acronyms like EV, GTO, BB in English form.',
+			].join(' ');
+		}
+
+		return 'Output language must be English only. Do not mix Korean or Japanese sentences.';
+	}
+
 	private handReviewFallback(language: PreferredLanguage, premium: boolean): string {
 		if (language === PreferredLanguage.KO) {
 			return [
@@ -701,11 +722,13 @@ export class AiService {
 			'3) Exploit Notes',
 			premium ? '4) GTO-Style Deep Notes' : '4) Basic Improvement Plan',
 			this.languageInstruction(language),
+			this.strictLanguageInstruction(language),
 		].join(' ');
 
 		const userPrompt = JSON.stringify(
 			{
 				handId: dto.handId,
+				outputLanguage: language,
 				handContext: dto.handContext,
 				includePremiumAnalysis: premium,
 			},
@@ -838,11 +861,13 @@ export class AiService {
 			'If uncertain, still provide concise feedback per action order.',
 			premium ? 'Include deeper tactical notes in analysis text.' : 'Keep analysis practical and concise.',
 			this.languageInstruction(language),
+			this.strictLanguageInstruction(language),
 		].join(' ');
 
 		const userPrompt = JSON.stringify(
 			{
 				handId: dto.handId,
+				outputLanguage: language,
 				hero: {
 					playerId: heroParticipant?.playerId ?? null,
 					userId: heroParticipant?.userId ?? dto.heroUserId ?? null,
