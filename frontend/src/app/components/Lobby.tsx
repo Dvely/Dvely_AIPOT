@@ -1100,7 +1100,6 @@ export function Lobby() {
                       }}
                       className="text-xs font-bold text-cyan-400 bg-[#11122D] px-3 py-1 rounded-full hover:text-cyan-300"
                     >
-                      {leaderboardLoading ? 'Loading...' : 'Refresh'}
                       {leaderboardLoading ? t('Loading...') : t('Refresh')}
                     </button>
                  </div>
