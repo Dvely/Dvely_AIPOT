@@ -39,6 +39,35 @@ export interface UserRecord {
   avatar: AvatarConfig;
   stats: UserStats;
   subscriptionActive: boolean;
+  friendIds: string[];
+  createdAt: string;
+}
+
+export interface FriendRequestRecord {
+  id: string;
+  requesterUserId: string;
+  targetUserId: string;
+  status: 'pending' | 'accepted' | 'declined';
+  createdAt: string;
+  respondedAt?: string;
+}
+
+export interface RoomInviteRecord {
+  id: string;
+  roomId: string;
+  inviterUserId: string;
+  inviteeUserId: string;
+  status: 'pending' | 'accepted' | 'declined' | 'expired';
+  createdAt: string;
+  respondedAt?: string;
+}
+
+export interface PendingJoinRequest {
+  userId: string;
+  displayName: string;
+  avatarInfo: AvatarConfig | null;
+  stackAmount: number;
+  preferredSeatId?: number;
   createdAt: string;
 }
 
@@ -68,6 +97,7 @@ export interface PlayerState {
   allIn: boolean;
   connected: boolean;
   timeoutStrikeCount?: number;
+  sittingOut?: boolean;
   avatarInfo: AvatarConfig | null;
   holeCards: string[];
   botConfig?: BotConfig;
@@ -125,6 +155,7 @@ export interface RoomRecord {
   blindSmall: number;
   blindBig: number;
   seats: SeatState[];
+  pendingJoins?: PendingJoinRequest[];
   gameState: GameState | null;
   lastDealerSeatId?: number | null;
   createdAt: string;

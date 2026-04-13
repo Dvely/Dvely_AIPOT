@@ -2,7 +2,7 @@ import { useNavigate } from "react-router";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  Coins, Menu, Crown, Settings, Plus, Target, Users, Swords, BookOpen, X, Lock, Unlock, LogOut, CheckCircle2, ShoppingBag, Info, Trophy, Timer, Volume2, Globe, ChevronRight
+  Coins, Menu, Crown, Settings, Plus, Target, Users, UserPlus, Swords, BookOpen, X, Lock, Unlock, LogOut, CheckCircle2, ShoppingBag, Info, Trophy, Timer, Volume2, Globe, ChevronRight
 } from "lucide-react";
 import {
   getCurrentAuth,
@@ -13,6 +13,12 @@ import {
   signOut,
 } from "../auth";
 import { apiFetch } from "../api";
+import {
+  AUDIO_SETTINGS_UPDATED_EVENT,
+  AudioSettings,
+  getAudioSettings,
+  setAudioSettings,
+} from "../audio";
 import { useI18n } from "../i18n";
 
 type LobbyRoomType = "ai_bot" | "cash" | "tournament";
@@ -84,6 +90,37 @@ interface ProfileStatsResponse {
   biggestPot: number;
   totalProfit: number;
   winRate: number;
+}
+
+interface SocialUserSummary {
+  id: string;
+  nickname: string;
+  role: "guest" | "free" | "pro";
+  isFriend?: boolean;
+}
+
+interface IncomingFriendRequest {
+  id: string;
+  requesterUserId: string;
+  requesterNickname: string;
+  createdAt: string;
+}
+
+interface OutgoingFriendRequest {
+  id: string;
+  targetUserId: string;
+  targetNickname: string;
+  createdAt: string;
+}
+
+interface SocialRoomInvite {
+  id: string;
+  roomId: string;
+  roomName: string;
+  roomType: LobbyRoomType;
+  inviterUserId: string;
+  inviterNickname: string;
+  createdAt: string;
 }
 
 const AVATAR_TOP_OPTIONS = [
@@ -219,6 +256,7 @@ export function Lobby() {
   const [showMenu, setShowMenu] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showSocialModal, setShowSocialModal] = useState(false);
   const [showHelpSupportModal, setShowHelpSupportModal] = useState(false);
   const [profileTab, setProfileTab] = useState<"stats" | "avatar" | "settings">("stats");
   const [avatarOptions, setAvatarOptions] = useState({
@@ -248,7 +286,16 @@ export function Lobby() {
   const [settingsLanguage, setSettingsLanguage] = useState<PreferredLanguage>(
     getCurrentPreferredLanguage(),
   );
+  const [audioSettings, setAudioSettingsState] = useState<AudioSettings>(() => getAudioSettings());
   const [settingsBusy, setSettingsBusy] = useState(false);
+  const [socialBusy, setSocialBusy] = useState(false);
+  const [socialNotice, setSocialNotice] = useState("");
+  const [friendSearch, setFriendSearch] = useState("");
+  const [friendSearchResults, setFriendSearchResults] = useState<SocialUserSummary[]>([]);
+  const [friends, setFriends] = useState<SocialUserSummary[]>([]);
+  const [incomingFriendRequests, setIncomingFriendRequests] = useState<IncomingFriendRequest[]>([]);
+  const [outgoingFriendRequests, setOutgoingFriendRequests] = useState<OutgoingFriendRequest[]>([]);
+  const [roomInvites, setRoomInvites] = useState<SocialRoomInvite[]>([]);
   
   const { isLoggedIn, isPro, userName, balanceAmount } = getCurrentAuth();
   const currentUserId = getCurrentUserId();
@@ -359,6 +406,9 @@ export function Lobby() {
   };
 
   const saveSettings = async () => {
+    const appliedAudio = setAudioSettings(audioSettings);
+    setAudioSettingsState(appliedAudio);
+
     if (!isLoggedIn) {
       setShowSettingsModal(false);
       return;
@@ -417,6 +467,124 @@ export function Lobby() {
     }
   };
 
+  const loadSocial = async () => {
+    if (!isLoggedIn) {
+      setFriends([]);
+      setIncomingFriendRequests([]);
+      setOutgoingFriendRequests([]);
+      setRoomInvites([]);
+      return;
+    }
+
+    setSocialBusy(true);
+    try {
+      const [friendsData, friendRequestData, inviteData] = await Promise.all([
+        apiFetch<SocialUserSummary[]>("/social/friends"),
+        apiFetch<{ incoming: IncomingFriendRequest[]; outgoing: OutgoingFriendRequest[] }>("/social/friend-requests"),
+        apiFetch<SocialRoomInvite[]>("/social/room-invites"),
+      ]);
+
+      setFriends(Array.isArray(friendsData) ? friendsData : []);
+      setIncomingFriendRequests(
+        Array.isArray(friendRequestData?.incoming) ? friendRequestData.incoming : [],
+      );
+      setOutgoingFriendRequests(
+        Array.isArray(friendRequestData?.outgoing) ? friendRequestData.outgoing : [],
+      );
+      setRoomInvites(Array.isArray(inviteData) ? inviteData : []);
+      setSocialNotice("");
+    } catch (error) {
+      setSocialNotice(error instanceof Error ? error.message : t("Failed to load social data."));
+    } finally {
+      setSocialBusy(false);
+    }
+  };
+
+  const handleSearchUsers = async () => {
+    if (!isLoggedIn) return;
+    const query = friendSearch.trim();
+    if (!query) {
+      setFriendSearchResults([]);
+      return;
+    }
+
+    setSocialBusy(true);
+    try {
+      const results = await apiFetch<SocialUserSummary[]>(
+        `/social/users?q=${encodeURIComponent(query)}`,
+      );
+      setFriendSearchResults(Array.isArray(results) ? results : []);
+      setSocialNotice("");
+    } catch (error) {
+      setSocialNotice(error instanceof Error ? error.message : t("Failed to search users."));
+    } finally {
+      setSocialBusy(false);
+    }
+  };
+
+  const handleSendFriendRequest = async (targetNickname: string) => {
+    if (!isLoggedIn) return;
+
+    setSocialBusy(true);
+    try {
+      await apiFetch("/social/friend-requests", {
+        method: "POST",
+        body: JSON.stringify({ targetNickname }),
+      });
+      setSocialNotice(t("Friend request sent."));
+      await loadSocial();
+    } catch (error) {
+      setSocialNotice(error instanceof Error ? error.message : t("Failed to send friend request."));
+    } finally {
+      setSocialBusy(false);
+    }
+  };
+
+  const handleRespondFriendRequest = async (requestId: string, accept: boolean) => {
+    if (!isLoggedIn) return;
+
+    setSocialBusy(true);
+    try {
+      await apiFetch(`/social/friend-requests/${requestId}/${accept ? "accept" : "decline"}`, {
+        method: "POST",
+      });
+      setSocialNotice(accept ? t("Friend request accepted.") : t("Friend request declined."));
+      await loadSocial();
+    } catch (error) {
+      setSocialNotice(error instanceof Error ? error.message : t("Failed to process friend request."));
+    } finally {
+      setSocialBusy(false);
+    }
+  };
+
+  const handleRespondRoomInvite = async (inviteId: string, accept: boolean) => {
+    if (!isLoggedIn) return;
+
+    setSocialBusy(true);
+    try {
+      if (accept) {
+        const room = await apiFetch<{ id: string; type: LobbyRoomType }>(
+          `/social/room-invites/${inviteId}/accept`,
+          { method: "POST" },
+        );
+
+        navigateToRoom(room.id, {
+          mode: room.type === "ai_bot" ? "bot" : room.type,
+          allowStartControl: false,
+        });
+        setShowSocialModal(false);
+      } else {
+        await apiFetch(`/social/room-invites/${inviteId}/decline`, { method: "POST" });
+      }
+
+      await loadSocial();
+    } catch (error) {
+      setSocialNotice(error instanceof Error ? error.message : t("Failed to process invite."));
+    } finally {
+      setSocialBusy(false);
+    }
+  };
+
   useEffect(() => {
     void loadTables();
   }, []);
@@ -434,10 +602,32 @@ export function Lobby() {
   }, [showProfileModal, isLoggedIn]);
 
   useEffect(() => {
-    if (showSettingsModal && isLoggedIn) {
+    if (!showSettingsModal) return;
+
+    setAudioSettingsState(getAudioSettings());
+    if (isLoggedIn) {
       void loadProfile();
     }
   }, [showSettingsModal, isLoggedIn]);
+
+  useEffect(() => {
+    if (!showSocialModal || !isLoggedIn) return;
+    void loadSocial();
+  }, [showSocialModal, isLoggedIn]);
+
+  useEffect(() => {
+    const syncAudio = () => {
+      setAudioSettingsState(getAudioSettings());
+    };
+
+    window.addEventListener(AUDIO_SETTINGS_UPDATED_EVENT, syncAudio as EventListener);
+    window.addEventListener("storage", syncAudio);
+
+    return () => {
+      window.removeEventListener(AUDIO_SETTINGS_UPDATED_EVENT, syncAudio as EventListener);
+      window.removeEventListener("storage", syncAudio);
+    };
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'LEADERBOARD') {
@@ -641,6 +831,19 @@ export function Lobby() {
             >
               {!isLoggedIn ? <Lock className="w-5 h-5" /> : <Users className="w-5 h-5" />}
               {t("Create Table")}
+            </button>
+            <button
+              onClick={() => {
+                if (!isLoggedIn) {
+                  alert(t("Sign in to use social features."));
+                  return;
+                }
+                setShowSocialModal(true);
+              }}
+              className={`w-full font-black py-3 rounded-xl transition-all flex justify-center items-center gap-2 uppercase ${!isLoggedIn ? 'bg-slate-700 text-slate-400 shadow-[0_4px_0_#334155] opacity-80' : 'bg-gradient-to-b from-cyan-500 to-blue-600 text-white shadow-[0_4px_0_#1D4ED8] hover:translate-y-1 hover:shadow-[0_0px_0_#1D4ED8]'}`}
+            >
+              {!isLoggedIn ? <Lock className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
+              {t("Friends")}
             </button>
             <p className="text-xs text-center text-slate-400 font-medium px-2 mt-2">
               {t("Create a custom table and invite friends to play securely.")}
@@ -1513,16 +1716,58 @@ export function Lobby() {
                    </h4>
                    <div className="flex flex-col gap-4 bg-[#11122D] p-4 rounded-xl border border-white/5">
                      <div className="flex items-center gap-4">
-                       <span className="text-xs font-bold text-slate-400 w-16">{t("Master")}</span>
-                       <input type="range" min="0" max="100" defaultValue="80" className="flex-1 accent-cyan-500" />
+                       <span className="text-xs font-bold text-slate-400 w-16">BGM</span>
+                       <input
+                         type="range"
+                         min="0"
+                         max="100"
+                         value={audioSettings.bgm}
+                         onChange={(event) => {
+                           const next = Number.parseInt(event.target.value, 10);
+                           const merged = { ...audioSettings, bgm: Number.isFinite(next) ? next : 0 };
+                           setAudioSettingsState(merged);
+                           setAudioSettings({ bgm: merged.bgm });
+                         }}
+                         className="flex-1 accent-cyan-500"
+                       />
+                       <span className="text-xs font-bold text-cyan-300 w-10 text-right">{audioSettings.bgm}</span>
                      </div>
                      <div className="flex items-center gap-4">
-                       <span className="text-xs font-bold text-slate-400 w-16">{t("Music")}</span>
-                       <input type="range" min="0" max="100" defaultValue="40" className="flex-1 accent-cyan-500" />
+                       <span className="text-xs font-bold text-slate-400 w-16">CARD</span>
+                       <input
+                         type="range"
+                         min="0"
+                         max="100"
+                         value={audioSettings.card}
+                         onChange={(event) => {
+                           const next = Number.parseInt(event.target.value, 10);
+                           const merged = { ...audioSettings, card: Number.isFinite(next) ? next : 0 };
+                           setAudioSettingsState(merged);
+                           setAudioSettings({ card: merged.card });
+                         }}
+                         className="flex-1 accent-cyan-500"
+                       />
+                       <span className="text-xs font-bold text-cyan-300 w-10 text-right">{audioSettings.card}</span>
                      </div>
                      <div className="flex items-center gap-4">
-                       <span className="text-xs font-bold text-slate-400 w-16">{t("SFX")}</span>
-                       <input type="range" min="0" max="100" defaultValue="100" className="flex-1 accent-cyan-500" />
+                       <span className="text-xs font-bold text-slate-400 w-16">VICTORY</span>
+                       <input
+                         type="range"
+                         min="0"
+                         max="100"
+                         value={audioSettings.victory}
+                         onChange={(event) => {
+                           const next = Number.parseInt(event.target.value, 10);
+                           const merged = {
+                             ...audioSettings,
+                             victory: Number.isFinite(next) ? next : 0,
+                           };
+                           setAudioSettingsState(merged);
+                           setAudioSettings({ victory: merged.victory });
+                         }}
+                         className="flex-1 accent-cyan-500"
+                       />
+                       <span className="text-xs font-bold text-cyan-300 w-10 text-right">{audioSettings.victory}</span>
                      </div>
                    </div>
                  </div>
@@ -1536,6 +1781,182 @@ export function Lobby() {
                  >
                    {settingsBusy ? t("Saving...") : t("Save Changes")}
                  </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* SOCIAL MODAL */}
+      <AnimatePresence>
+        {showSocialModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-[#242754] w-full max-w-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
+            >
+              <div className="bg-[#1A1C3E] p-4 flex justify-between items-center border-b border-white/5">
+                <h3 className="text-xl font-black uppercase tracking-wider flex items-center gap-2">
+                  <UserPlus className="text-cyan-400 w-6 h-6" /> {t("Friends & Invites")}
+                </h3>
+                <button onClick={() => setShowSocialModal(false)} className="text-slate-400 hover:text-white transition">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="p-5 md:p-6 flex flex-col gap-5 max-h-[80vh] overflow-y-auto">
+                {socialNotice ? (
+                  <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-sm font-semibold text-cyan-200">
+                    {socialNotice}
+                  </div>
+                ) : null}
+
+                <div className="bg-[#11122D] border border-white/10 rounded-xl p-4">
+                  <h4 className="text-sm font-black text-white uppercase tracking-wider mb-3">{t("Find Players")}</h4>
+                  <div className="flex gap-2">
+                    <input
+                      value={friendSearch}
+                      onChange={(event) => setFriendSearch(event.target.value)}
+                      placeholder={t("Enter nickname")}
+                      className="flex-1 bg-[#0A0B1F] border border-white/10 rounded-lg p-3 text-white font-bold outline-none focus:border-cyan-500 transition placeholder:text-slate-500"
+                    />
+                    <button
+                      onClick={() => {
+                        void handleSearchUsers();
+                      }}
+                      disabled={socialBusy}
+                      className="px-4 py-3 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-60 text-white font-black text-sm uppercase"
+                    >
+                      {t("Search")}
+                    </button>
+                  </div>
+                  <div className="mt-3 flex flex-col gap-2">
+                    {friendSearchResults.map((user) => (
+                      <div key={user.id} className="bg-[#0A0B1F] border border-white/10 rounded-lg px-3 py-2 flex items-center justify-between">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-white">{user.nickname}</span>
+                          <span className="text-[11px] uppercase tracking-wider text-slate-400">{user.role}</span>
+                        </div>
+                        <button
+                          onClick={() => {
+                            void handleSendFriendRequest(user.nickname);
+                          }}
+                          disabled={socialBusy || user.isFriend}
+                          className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-black uppercase"
+                        >
+                          {user.isFriend ? t("Friend") : t("Add")}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-[#11122D] border border-white/10 rounded-xl p-4">
+                    <h4 className="text-sm font-black text-white uppercase tracking-wider mb-3">{t("Incoming Requests")}</h4>
+                    <div className="flex flex-col gap-2">
+                      {incomingFriendRequests.length === 0 ? (
+                        <p className="text-sm text-slate-400 font-semibold">{t("No incoming requests.")}</p>
+                      ) : (
+                        incomingFriendRequests.map((request) => (
+                          <div key={request.id} className="bg-[#0A0B1F] border border-white/10 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
+                            <span className="font-bold text-white text-sm">{request.requesterNickname}</span>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => {
+                                  void handleRespondFriendRequest(request.id, true);
+                                }}
+                                className="px-2 py-1 rounded bg-green-600 hover:bg-green-500 text-white text-[11px] font-black uppercase"
+                              >
+                                {t("Accept")}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  void handleRespondFriendRequest(request.id, false);
+                                }}
+                                className="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-white text-[11px] font-black uppercase"
+                              >
+                                {t("Decline")}
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-[#11122D] border border-white/10 rounded-xl p-4">
+                    <h4 className="text-sm font-black text-white uppercase tracking-wider mb-3">{t("Friends")}</h4>
+                    <div className="flex flex-col gap-2 max-h-[220px] overflow-y-auto">
+                      {friends.length === 0 ? (
+                        <p className="text-sm text-slate-400 font-semibold">{t("No friends added yet.")}</p>
+                      ) : (
+                        friends.map((friend) => (
+                          <div key={friend.id} className="bg-[#0A0B1F] border border-white/10 rounded-lg px-3 py-2 flex items-center justify-between">
+                            <span className="font-bold text-white text-sm">{friend.nickname}</span>
+                            <span className="text-[11px] uppercase tracking-wider text-slate-400">{friend.role}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-[#11122D] border border-white/10 rounded-xl p-4">
+                  <h4 className="text-sm font-black text-white uppercase tracking-wider mb-3">{t("Room Invites")}</h4>
+                  <div className="flex flex-col gap-2">
+                    {roomInvites.length === 0 ? (
+                      <p className="text-sm text-slate-400 font-semibold">{t("No pending room invites.")}</p>
+                    ) : (
+                      roomInvites.map((invite) => (
+                        <div key={invite.id} className="bg-[#0A0B1F] border border-white/10 rounded-lg px-3 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                          <div className="flex flex-col">
+                            <span className="font-bold text-white text-sm">{invite.roomName}</span>
+                            <span className="text-[11px] text-slate-400">{invite.inviterNickname} {t("invited you")}</span>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                void handleRespondRoomInvite(invite.id, true);
+                              }}
+                              className="px-3 py-1.5 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-black uppercase"
+                            >
+                              {t("Accept")}
+                            </button>
+                            <button
+                              onClick={() => {
+                                void handleRespondRoomInvite(invite.id, false);
+                              }}
+                              className="px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-white text-xs font-black uppercase"
+                            >
+                              {t("Decline")}
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {outgoingFriendRequests.length > 0 ? (
+                  <div className="bg-[#11122D] border border-white/10 rounded-xl p-4">
+                    <h4 className="text-sm font-black text-white uppercase tracking-wider mb-3">{t("Sent Requests")}</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {outgoingFriendRequests.map((request) => (
+                        <span key={request.id} className="px-2.5 py-1 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-200 text-xs font-bold">
+                          {request.targetNickname}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </motion.div>
           </motion.div>
@@ -1631,6 +2052,19 @@ export function Lobby() {
                  </button>
                  <button onClick={() => { navigate("/store"); setShowMenu(false); }} className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left">
                    <ShoppingBag className="w-5 h-5 text-yellow-400" /> {t("Store")}
+                 </button>
+                 <button
+                   onClick={() => {
+                     if (!isLoggedIn) {
+                       alert(t("Sign in to use social features."));
+                       return;
+                     }
+                     setShowSocialModal(true);
+                     setShowMenu(false);
+                   }}
+                   className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left"
+                 >
+                   <UserPlus className="w-5 h-5" /> {t("Friends")}
                  </button>
                  <button onClick={() => { setShowSettingsModal(true); setShowMenu(false); }} className="flex items-center gap-3 w-full p-3 rounded-lg hover:bg-white/5 text-slate-300 hover:text-white font-bold transition text-left">
                    <Settings className="w-5 h-5" /> {t("Settings")}

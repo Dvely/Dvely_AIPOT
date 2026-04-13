@@ -4,6 +4,7 @@ import { ArrowLeft, MessageCircle, Settings, Users, Info, Trophy, Clock, Coins, 
 import { motion, AnimatePresence } from "motion/react";
 import { getCurrentAuth, getCurrentUserId } from "../auth";
 import { apiFetch } from "../api";
+import { audioManager } from "../audio";
 import { useI18n } from "../i18n";
 
 type Position = number; // Used as seat index
@@ -47,6 +48,7 @@ interface LiveParticipant {
   stackAmount: number;
   currentBetAmount: number;
   folded: boolean;
+  sittingOut?: boolean;
   allIn?: boolean;
   holeCards: string[];
   avatarInfo?: {
@@ -65,6 +67,19 @@ interface LiveSeat {
   participant: LiveParticipant | null;
 }
 
+interface LivePendingJoin {
+  userId: string;
+  displayName: string;
+  preferredSeatId?: number;
+  createdAt: string;
+}
+
+interface SocialFriendSummary {
+  id: string;
+  nickname: string;
+  role: "guest" | "free" | "pro";
+}
+
 interface LiveRoom {
   id: string;
   type: "ai_bot" | "cash" | "tournament";
@@ -76,6 +91,7 @@ interface LiveRoom {
   blindSmall: number;
   blindBig: number;
   seats: LiveSeat[];
+  pendingJoins?: LivePendingJoin[];
 }
 type BotStyle = "balanced" | "aggressive" | "tight";
 
@@ -243,6 +259,25 @@ function samePlayers(prev: Player[], next: Player[]) {
       a.cardsDealt !== b.cardsDealt ||
       a.seatId !== b.seatId ||
       !sameStringArray(a.holeCards, b.holeCards)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function samePendingJoins(a: LivePendingJoin[] | undefined, b: LivePendingJoin[] | undefined) {
+  const left = a ?? [];
+  const right = b ?? [];
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    const x = left[i];
+    const y = right[i];
+    if (
+      x.userId !== y.userId ||
+      x.displayName !== y.displayName ||
+      x.preferredSeatId !== y.preferredSeatId ||
+      x.createdAt !== y.createdAt
     ) {
       return false;
     }
@@ -641,6 +676,13 @@ export function PlayTable() {
   const [actionFxByPlayer, setActionFxByPlayer] = useState<Record<string, { type: ActionFxType; expiresAt: number }>>({});
   const [persistentAggroFx, setPersistentAggroFx] = useState<PersistentAggroFx | null>(null);
   const [showdownDelayUntil, setShowdownDelayUntil] = useState(0);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteFriends, setInviteFriends] = useState<SocialFriendSummary[]>([]);
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteNotice, setInviteNotice] = useState("");
+  const prevHeroDealtRef = useRef(false);
+  const prevCommunityCountRef = useRef<number | null>(null);
+  const prevWinnerRef = useRef<string | null>(null);
 
   // Raise Action State
   const [isRaising, setIsRaising] = useState(false);
@@ -657,7 +699,8 @@ export function PlayTable() {
   const tableSeatCount = isLiveMode ? (liveRoom?.maxSeats ?? maxPlayers) : maxPlayers;
   const isRoomHost = Boolean(currentUserId) && liveRoom?.hostUserId === currentUserId;
   const canManageLiveRoom = !isLiveMode || (isRoomHost && !!liveRoom?.isPrivate && !liveRoom?.hasBeenPublic);
-  const liveSeatedPlayers = liveRoom?.seats.filter((seat) => seat.participant).length ?? 0;
+  const liveActivePlayers =
+    liveRoom?.seats.filter((seat) => seat.participant && !seat.participant.sittingOut).length ?? 0;
   const inferredMode = location.state?.mode === "bot"
     ? "ai_bot"
     : (location.state?.mode === "cash" || location.state?.mode === "cash-game")
@@ -667,6 +710,7 @@ export function PlayTable() {
         : null;
   const roomMode = liveRoom?.type ?? inferredMode;
   const canAddBotToRoom = roomMode === "ai_bot";
+  const canSendPrivateInvite = Boolean(isLiveMode && liveRoom?.isPrivate && !liveRoom?.hasBeenPublic);
   const canConvertToPublic = Boolean(isLiveMode && canManageLiveRoom && liveRoom?.isPrivate && !liveRoom?.hasBeenPublic);
   const tableModeLabel = roomMode === "ai_bot"
     ? t("AI Bot Game")
@@ -857,6 +901,7 @@ export function PlayTable() {
           prev.maxSeats === room.maxSeats &&
           prev.blindSmall === room.blindSmall &&
           prev.blindBig === room.blindBig &&
+          samePendingJoins(prev.pendingJoins, room.pendingJoins) &&
           prevSeats.length === nextSeats.length &&
           prevSeats.every((seat, idx) => {
             const nextSeat = nextSeats[idx];
@@ -873,6 +918,7 @@ export function PlayTable() {
               p.stackAmount === n.stackAmount &&
               p.currentBetAmount === n.currentBetAmount &&
               p.folded === n.folded &&
+              Boolean(p.sittingOut) === Boolean(n.sittingOut) &&
               sameStringArray(p.holeCards, n.holeCards)
             );
           })
@@ -914,6 +960,10 @@ export function PlayTable() {
 
       const seatMap = new Map<number, string>();
       let mySeat: number | null = null;
+      let myParticipant: LiveParticipant | null = null;
+      const isWaitingJoin = Boolean(
+        currentUserId && room.pendingJoins?.some((item) => item.userId === currentUserId),
+      );
       const mappedPlayers: Player[] = room.seats
         .filter((seat) => seat.participant)
         .map((seat) => {
@@ -921,6 +971,7 @@ export function PlayTable() {
           const isHero = !!currentUserId && participant.userId === currentUserId;
           if (isHero) {
             mySeat = seat.seatId;
+            myParticipant = participant;
           }
           const playerId = isHero ? "hero" : `seat-${seat.seatId}`;
           seatMap.set(seat.seatId, playerId);
@@ -935,7 +986,7 @@ export function PlayTable() {
             avatarUrl: toAvatarUrl(participant.displayName, participant.avatarInfo),
             chips: participant.stackAmount,
             bet: participant.currentBetAmount,
-            status: participant.folded ? "folded" : "active",
+            status: participant.sittingOut || participant.folded ? "folded" : "active",
             allIn: Boolean(participant.allIn),
             cardsDealt: participant.holeCards.length > 0 && !shouldAnimateDeal,
             holeCards: participant.holeCards,
@@ -946,7 +997,11 @@ export function PlayTable() {
       setPlayers((prev) => (samePlayers(prev, mappedPlayers) ? prev : mappedPlayers));
       setHeroSeatId(mySeat);
       setUserState((prev) => {
-        const next = mySeat === null ? "spectating" : "playing";
+        const next = mySeat === null
+          ? (isWaitingJoin ? "waiting" : "spectating")
+          : myParticipant?.sittingOut
+            ? (isWaitingJoin ? "waiting" : "spectating")
+            : "playing";
         return prev === next ? prev : next;
       });
 
@@ -1081,7 +1136,11 @@ export function PlayTable() {
         }
       }
 
-      if (room.status === "HAND_ENDED") {
+      if (isWaitingJoin) {
+        setLog("Entry queued. You will join on the next available hand.");
+      } else if (myParticipant?.sittingOut) {
+        setLog("Spectating from your seat.");
+      } else if (room.status === "HAND_ENDED") {
         const shouldAutoContinue = room.type === "ai_bot" && room.isPrivate;
         setLog(
           shouldAutoContinue
@@ -1130,10 +1189,68 @@ export function PlayTable() {
     setBotStyle("balanced");
   }, [selectedSeat]);
 
+  const loadInviteFriends = async () => {
+    if (!canSendPrivateInvite) {
+      setInviteFriends([]);
+      return;
+    }
+
+    setInviteBusy(true);
+    try {
+      const friends = await apiFetch<SocialFriendSummary[]>("/social/friends");
+      setInviteFriends(Array.isArray(friends) ? friends : []);
+      setInviteNotice("");
+    } catch (error) {
+      setInviteFriends([]);
+      setInviteNotice(error instanceof Error ? error.message : t("Failed to load friends."));
+    } finally {
+      setInviteBusy(false);
+    }
+  };
+
   useEffect(() => {
     if (canAddBotToRoom || selectedSeat === null) return;
     setSelectedSeat(null);
   }, [canAddBotToRoom, selectedSeat]);
+
+  useEffect(() => {
+    if (!showInviteModal) return;
+    if (!canSendPrivateInvite) {
+      setShowInviteModal(false);
+      return;
+    }
+    void loadInviteFriends();
+  }, [showInviteModal, canSendPrivateInvite]);
+
+  useEffect(() => {
+    const hero = players.find((player) => player.id === "hero");
+    const heroDealtNow = Boolean(hero?.cardsDealt) && userState === "playing";
+    if (heroDealtNow && !prevHeroDealtRef.current) {
+      audioManager.playCardPlace();
+    }
+    prevHeroDealtRef.current = heroDealtNow;
+  }, [players, userState, liveGame?.gameState?.handId, phase]);
+
+  useEffect(() => {
+    const currentCount = communityCards.length;
+    const prevCount = prevCommunityCountRef.current;
+    if (prevCount !== null) {
+      const openedFlop = prevCount < 3 && currentCount >= 3;
+      const openedTurn = prevCount < 4 && currentCount >= 4;
+      const openedRiver = prevCount < 5 && currentCount >= 5;
+      if (openedFlop || openedTurn || openedRiver) {
+        audioManager.playCardSlide();
+      }
+    }
+    prevCommunityCountRef.current = currentCount;
+  }, [communityCards.length, liveGame?.gameState?.handId]);
+
+  useEffect(() => {
+    if (winner && winner !== prevWinnerRef.current) {
+      audioManager.playVictory();
+    }
+    prevWinnerRef.current = winner;
+  }, [winner]);
 
   useEffect(() => {
     if (!isLiveMode) return;
@@ -1509,11 +1626,54 @@ export function PlayTable() {
 
     setLiveBusy(true);
     try {
-      await apiFetch(`/rooms/${roomId}/seats/${heroSeatId}/leave`, { method: "POST" });
+      await apiFetch(`/rooms/${roomId}/seats/${heroSeatId}/sit-out`, { method: "POST" });
       await syncLiveTable();
-      setLog("You left your seat.");
+      setLog("You are now spectating from your seat.");
     } catch (error) {
-      alert(error instanceof Error ? error.message : t("Failed to leave seat."));
+      alert(error instanceof Error ? error.message : t("Failed to sit out."));
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
+  const handleSitIn = async () => {
+    if (!isLiveMode) {
+      setUserState("waiting");
+      setLog("Added to waitlist. Waiting for next hand...");
+      return;
+    }
+
+    if (heroSeatId === null) {
+      alert(t("You need to take a seat first."));
+      return;
+    }
+
+    setLiveBusy(true);
+    try {
+      await apiFetch(`/rooms/${roomId}/seats/${heroSeatId}/sit-in`, { method: "POST" });
+      await syncLiveTable();
+      setLog("Sit in requested.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : t("Failed to sit in."));
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
+  const handleCancelWaiting = async () => {
+    if (!isLiveMode) {
+      setUserState("spectating");
+      setLog("Waitlist cancelled. Spectating.");
+      return;
+    }
+
+    setLiveBusy(true);
+    try {
+      await apiFetch(`/rooms/${roomId}/waiting/cancel`, { method: "POST" });
+      await syncLiveTable();
+      setLog("Entry wait cancelled.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : t("Failed to cancel waiting."));
     } finally {
       setLiveBusy(false);
     }
@@ -1533,6 +1693,26 @@ export function PlayTable() {
       alert(error instanceof Error ? error.message : t("Failed to leave table."));
     } finally {
       setLiveBusy(false);
+    }
+  };
+
+  const handleSendRoomInvite = async (inviteeUserId: string) => {
+    if (!canSendPrivateInvite || !roomId) return;
+
+    setInviteBusy(true);
+    try {
+      await apiFetch("/social/room-invites", {
+        method: "POST",
+        body: JSON.stringify({
+          roomId,
+          inviteeUserId,
+        }),
+      });
+      setInviteNotice(t("Invite sent."));
+    } catch (error) {
+      setInviteNotice(error instanceof Error ? error.message : t("Failed to send invite."));
+    } finally {
+      setInviteBusy(false);
     }
   };
 
@@ -1873,7 +2053,7 @@ export function PlayTable() {
               {t("Make Public")}
             </button>
           )}
-          {userState === "playing" && !isTournament && (
+          {!isTournament && userState === "playing" && (
             <button 
               onClick={() => {
                 void handleSitOut();
@@ -1884,7 +2064,38 @@ export function PlayTable() {
               {t("Sit Out")}
             </button>
           )}
-          <button className="p-2 bg-black/40 hover:bg-black/60 rounded-full text-white backdrop-blur-md border border-white/10 transition">
+          {!isTournament && userState === "spectating" && heroSeatId !== null && (
+            <button
+              onClick={() => {
+                void handleSitIn();
+              }}
+              disabled={liveBusy}
+              className="px-4 py-2 bg-emerald-600/80 hover:bg-emerald-500/80 rounded-full text-white font-bold text-sm backdrop-blur-md border border-emerald-300/30 transition shadow-lg"
+            >
+              {t("Sit In")}
+            </button>
+          )}
+          {!isTournament && userState === "waiting" && (
+            <button
+              onClick={() => {
+                void handleCancelWaiting();
+              }}
+              disabled={liveBusy}
+              className="px-4 py-2 bg-slate-700/80 hover:bg-slate-600/80 rounded-full text-white font-bold text-sm backdrop-blur-md border border-slate-300/30 transition shadow-lg"
+            >
+              {t("Cancel Wait")}
+            </button>
+          )}
+          <button
+            onClick={() => {
+              if (!canSendPrivateInvite) {
+                alert(t("Invites are available only in private rooms."));
+                return;
+              }
+              setShowInviteModal(true);
+            }}
+            className="p-2 bg-black/40 hover:bg-black/60 rounded-full text-white backdrop-blur-md border border-white/10 transition"
+          >
             <Users className="w-5 h-5" />
           </button>
           <button className="p-2 bg-black/40 hover:bg-black/60 rounded-full text-white backdrop-blur-md border border-white/10 transition">
@@ -2004,13 +2215,13 @@ export function PlayTable() {
               if (!gameStarted) setGameStarted(true);
               setPhase("dealing");
             }}
-            disabled={liveBusy || (isLiveMode && liveRoom?.status === "WAITING_SETUP" && liveSeatedPlayers < 2)}
+            disabled={liveBusy || (isLiveMode && liveRoom?.status === "WAITING_SETUP" && liveActivePlayers < 2)}
             className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-3 md:px-8 md:py-4 bg-gradient-to-r from-green-500 to-emerald-400 text-white font-black text-xl md:text-2xl rounded-full shadow-[0_0_20px_rgba(34,197,94,0.5)] hover:scale-105 transition-transform z-50 uppercase tracking-widest border border-white/20"
           >
             {isLiveMode
               ? liveRoom?.status === "HAND_ENDED"
                 ? t("Next Hand")
-                : liveRoom?.status === "WAITING_SETUP" && liveSeatedPlayers < 2
+                : liveRoom?.status === "WAITING_SETUP" && liveActivePlayers < 2
                   ? t("Need 2 Players")
                   : t("Start Game")
               : gameStarted
@@ -2217,7 +2428,7 @@ export function PlayTable() {
               </motion.div>
             )}
             
-            {p.status === 'folded' && (
+            {p.status === 'folded' && !(p.id === 'hero' && userState !== 'playing') && (
               <div className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center text-sm font-black text-white">
                 {t("Fold")}
               </div>
@@ -2225,7 +2436,9 @@ export function PlayTable() {
             
             {p.id === 'hero' && userState !== 'playing' && (
               <div className="absolute inset-0 bg-black/60 rounded-full flex flex-col items-center justify-center text-center">
-                <span className="text-xs font-black text-white">{t("SITTING OUT")}</span>
+                <span className="text-xs font-black text-white">
+                  {userState === "waiting" ? t("WAITING ENTRY") : t("SITTING OUT")}
+                </span>
               </div>
             )}
             
@@ -2517,6 +2730,78 @@ export function PlayTable() {
                </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showInviteModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[220] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.92, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.92, y: 20 }}
+              className="bg-[#242754] w-full max-w-md rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
+            >
+              <div className="bg-[#1A1C3E] p-4 flex justify-between items-center border-b border-white/5">
+                <h3 className="text-lg font-black uppercase tracking-wider flex items-center gap-2">
+                  <Users className="text-cyan-400 w-5 h-5" /> {t("Invite Friends")}
+                </h3>
+                <button
+                  onClick={() => setShowInviteModal(false)}
+                  className="text-slate-400 hover:text-white transition"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="p-5 flex flex-col gap-3 max-h-[65vh] overflow-y-auto">
+                <p className="text-sm text-slate-300 font-semibold">
+                  {t("Only private room invites are supported.")}
+                </p>
+
+                {inviteNotice ? (
+                  <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-bold text-cyan-200">
+                    {inviteNotice}
+                  </div>
+                ) : null}
+
+                {inviteBusy ? (
+                  <div className="rounded-lg border border-white/10 bg-[#11122D] px-3 py-3 text-sm font-semibold text-slate-300">
+                    {t("Loading...")}
+                  </div>
+                ) : inviteFriends.length === 0 ? (
+                  <div className="rounded-lg border border-white/10 bg-[#11122D] px-3 py-3 text-sm font-semibold text-slate-300">
+                    {t("No friends added yet.")}
+                  </div>
+                ) : (
+                  inviteFriends.map((friend) => (
+                    <div
+                      key={friend.id}
+                      className="bg-[#11122D] border border-white/10 rounded-lg px-3 py-3 flex items-center justify-between"
+                    >
+                      <div className="flex flex-col">
+                        <span className="text-white font-bold">{friend.nickname}</span>
+                        <span className="text-[11px] uppercase tracking-wider text-slate-400">{friend.role}</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          void handleSendRoomInvite(friend.id);
+                        }}
+                        disabled={inviteBusy}
+                        className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-60 text-white text-xs font-black uppercase tracking-wider"
+                      >
+                        {t("Invite")}
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
 

@@ -13,6 +13,7 @@ import { AiModule } from './ai/ai.module';
 import { CommonModule } from './common/common.module';
 import { UsersModule } from './users/users.module';
 import { StoreModule } from './store/store.module';
+import { SocialModule } from './social/social.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { StoreModule } from './store/store.module';
     CommonModule,
     UsersModule,
     StoreModule,
+    SocialModule,
   ],
   controllers: [AppController],
   providers: [AppService],
