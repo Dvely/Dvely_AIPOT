@@ -26,6 +26,7 @@ import {
 	FriendRequestRecord,
 	GameState,
 	HandActionAnalysis,
+	HandReviewAnalyzeJob,
 	HandAction,
 	HandReviewParticipant,
 	HandReviewRecord,
@@ -2437,6 +2438,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 				...review,
 				analyses: review.analyses ?? [],
 				favoriteUserIds: review.favoriteUserIds ?? [],
+				analyzeJob: review.analyzeJob,
 			}));
 	}
 
@@ -2458,6 +2460,7 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 			...review,
 			analyses: review.analyses ?? [],
 			favoriteUserIds: review.favoriteUserIds ?? [],
+			analyzeJob: review.analyzeJob,
 		};
 	}
 
@@ -2526,6 +2529,30 @@ export class StoreService implements OnModuleInit, OnModuleDestroy {
 		this.handReviews.set(params.handId, review);
 		this.markDirty();
 		return record;
+	}
+
+	getHandReviewAnalyzeJob(handId: string, userId: string): HandReviewAnalyzeJob | null {
+		const review = this.getHandReview(handId, userId);
+		return review.analyzeJob ?? null;
+	}
+
+	setHandReviewAnalyzeJob(params: {
+		handId: string;
+		userId: string;
+		job: HandReviewAnalyzeJob;
+	}): HandReviewRecord {
+		const review = this.handReviews.get(params.handId);
+		if (!review) {
+			throw new NotFoundException('핸드 리뷰를 찾을 수 없습니다.');
+		}
+		if (!review.participantIds.includes(params.userId)) {
+			throw new BadRequestException('해당 핸드에 대한 접근 권한이 없습니다.');
+		}
+
+		review.analyzeJob = params.job;
+		this.handReviews.set(params.handId, review);
+		this.markDirty();
+		return review;
 	}
 
 	private createDeck(): string[] {

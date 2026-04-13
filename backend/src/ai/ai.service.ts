@@ -10,7 +10,6 @@ import { BotActionRequestDto } from './dto/bot-action-request.dto';
 import { HandReviewRequestDto } from './dto/hand-review-request.dto';
 
 const BOT_PROVIDER_TIMEOUT_MS = 5000;
-const REVIEW_PROVIDER_TIMEOUT_MS = 10000;
 
 @Injectable()
 export class AiService {
@@ -122,38 +121,38 @@ export class AiService {
 		if (language === PreferredLanguage.KO) {
 			return [
 				'1) 핵심 실수',
-				'- LLM 응답 지연으로 상세 분석을 생성하지 못했습니다.',
+				'- 분석 서비스 오류로 상세 분석을 생성하지 못했습니다.',
 				'2) 더 나은 라인',
 				'- 현재 액션 로그 기준으로 포지션/팟오즈 중심 재검토를 권장합니다.',
 				'3) 익스플로잇 노트',
 				'- 다음 시도에서 동일 모델/프롬프트로 재분석해 비교하세요.',
 				premium ? '4) GTO 스타일 심화 노트' : '4) 기본 개선 계획',
-				'- 타임아웃으로 심화 분석이 생략되었습니다.',
+				'- 서비스 오류로 심화 분석이 생략되었습니다.',
 			].join('\n');
 		}
 
 		if (language === PreferredLanguage.JA) {
 			return [
 				'1) 主要なミス',
-				'- LLMの応答遅延により詳細分析を生成できませんでした。',
+				'- 分析サービスのエラーにより詳細分析を生成できませんでした。',
 				'2) より良いライン',
 				'- 現在のアクションログを基に、ポジションとポットオッズ中心で再検討してください。',
 				'3) エクスプロイトノート',
 				'- 次回は同じモデル/プロンプトで再分析し、結果を比較してください。',
 				premium ? '4) GTOスタイル詳細ノート' : '4) 基本改善プラン',
-				'- タイムアウトにより詳細分析は省略されました。',
+				'- サービスエラーにより詳細分析は省略されました。',
 			].join('\n');
 		}
 
 		return [
 			'1) Key Mistakes',
-			'- Detailed analysis could not be generated due to LLM timeout.',
+			'- Detailed analysis could not be generated due to analyzer service failure.',
 			'2) Better Lines',
 			'- Re-evaluate this hand with stronger focus on position and pot odds.',
 			'3) Exploit Notes',
 			'- Retry with the same model/prompt and compare differences.',
 			premium ? '4) GTO-Style Deep Notes' : '4) Basic Improvement Plan',
-			'- Deep analysis was skipped due to timeout.',
+			'- Deep analysis was skipped due to service failure.',
 		].join('\n');
 	}
 
@@ -547,7 +546,7 @@ export class AiService {
 				model,
 				systemPrompt,
 				userPrompt,
-				timeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
+				timeoutMs: 0,
 			});
 		} catch {
 			analysis = this.handReviewFallback(language, premium);
@@ -638,7 +637,7 @@ export class AiService {
 				model,
 				systemPrompt,
 				userPrompt,
-				timeoutMs: REVIEW_PROVIDER_TIMEOUT_MS,
+				timeoutMs: 0,
 			});
 
 			const parsed = this.extractJson(raw);
@@ -721,16 +720,16 @@ export class AiService {
 				provider,
 				model,
 				summary: this.localizedText(language, {
-					en: 'Generated fallback reviews due to LLM timeout.',
-					ko: 'LLM 응답 지연으로 폴백 리뷰를 생성했습니다.',
-					ja: 'LLMの応答遅延によりフォールバックレビューを生成しました。',
+					en: 'Generated fallback reviews due to analyzer service failure.',
+					ko: '분석 서비스 오류로 폴백 리뷰를 생성했습니다.',
+					ja: '分析サービスのエラーによりフォールバックレビューを生成しました。',
 				}),
 				reviews: actions.map((action) => ({
 					order: action.order,
 					analysis: this.localizedText(language, {
-						en: `Action #${action.order}: ${action.action.toUpperCase()} / ${action.street} - Detailed analysis could not be generated due to timeout.`,
-						ko: `액션 #${action.order}: ${action.action.toUpperCase()} / ${action.street} - 타임아웃으로 상세 분석을 생성하지 못했습니다.`,
-						ja: `アクション #${action.order}: ${action.action.toUpperCase()} / ${action.street} - タイムアウトにより詳細分析を生成できませんでした。`,
+						en: `Action #${action.order}: ${action.action.toUpperCase()} / ${action.street} - Detailed analysis could not be generated due to service failure.`,
+						ko: `액션 #${action.order}: ${action.action.toUpperCase()} / ${action.street} - 서비스 오류로 상세 분석을 생성하지 못했습니다.`,
+						ja: `アクション #${action.order}: ${action.action.toUpperCase()} / ${action.street} - サービスエラーにより詳細分析を生成できませんでした。`,
 					}),
 				})),
 			};
