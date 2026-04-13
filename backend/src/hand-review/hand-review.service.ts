@@ -139,6 +139,7 @@ export class HandReviewService {
 				model: params.model,
 				includePremiumAnalysis: params.includePremiumAnalysis,
 				language: params.language,
+				heroUserId: params.userId,
 			});
 
 			for (const review of result.reviews) {
