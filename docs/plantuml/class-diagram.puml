@@ -1,0 +1,241 @@
+@startuml
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+skinparam linetype ortho
+
+title AIPOT Core Class Diagram (Backend 중심)
+
+class AuthController {
+  +signUp(dto)
+  +signIn(dto)
+  +createGuestSession(dto)
+  +me(user)
+}
+
+class AuthService {
+  +signUp(dto): AuthResult
+  +signIn(dto): AuthResult
+  +createGuestSession(dto): AuthResult
+  +changePassword(userId, dto)
+}
+
+class RoomsController {
+  +createRoom(user, dto)
+  +joinByCode(user, dto)
+  +addBot(user, roomId, seatId, dto)
+  +startGame(user, roomId)
+}
+
+class RoomsService {
+  +createRoom(user, dto): RoomRecord
+  +joinPublicRoom(user, roomId): RoomRecord
+  +addBot(user, roomId, seatId, dto): RoomRecord
+  +updateBlinds(user, roomId, dto): RoomRecord
+}
+
+class GameController {
+  +getState(user, roomId)
+  +act(user, roomId, dto)
+  +timerSync(roomId)
+  +nextHand(user, roomId)
+}
+
+class GameService {
+  +getState(user, roomId)
+  +act(user, roomId, dto)
+  +timerSync(roomId)
+  +nextHand(user, roomId)
+  -processBotTurns(roomId)
+  -decideBotAction(room, bot)
+}
+
+class HandReviewController {
+  +listHands(user)
+  +detail(user, handId)
+  +analyze(user, handId, dto)
+  +getAnalyzeStatus(user, handId)
+}
+
+class HandReviewService {
+  +analyze(user, handId, dto)
+  +analyzeAction(user, handId, order, dto)
+  +getAnalyzeStatus(user, handId)
+  -runQueuedAnalyzeJob(params)
+}
+
+class AiController {
+  +botAction(user, dto)
+  +handReview(dto)
+}
+
+class AiService {
+  +generateBotAction(dto, role)
+  +analyzeHandReview(dto)
+  +analyzeAllHandActions(dto)
+  -runProvider(options)
+  -normalizeDecision(parsed)
+  -buildActionReviewSystemPrompt(options)
+}
+
+class UsersService {
+  +findById(userId): UserRecord
+  +createUser(params): UserRecord
+  +updatePreferredLanguage(userId, lang): UserRecord
+}
+
+class StoreService {
+  +createRoom(params): RoomRecord
+  +joinRoomFirstEmptySeat(params): RoomRecord
+  +startGame(roomId, actorUserId): RoomRecord
+  +applyPlayerAction(params): RoomRecord
+  +autoResolveTimeout(roomId): RoomRecord
+  +addHandActionAnalysis(params): HandActionAnalysis
+  +setHandReviewAnalyzeJob(params): HandReviewRecord
+}
+
+class RoomRecord {
+  +id: string
+  +type: RoomType
+  +status: RoomStatus
+  +seats: SeatState[]
+  +gameState: GameState?
+}
+
+class SeatState {
+  +seatId: number
+  +participant: PlayerState?
+}
+
+class PlayerState {
+  +seatId: number
+  +playerId: string
+  +roleType: ParticipantType
+  +stackAmount: number
+  +currentBetAmount: number
+  +folded: boolean
+  +allIn: boolean
+  +botConfig: BotConfig?
+}
+
+class BotConfig {
+  +modelTier: BotModelTier
+  +provider: LlmProvider
+  +style: balanced|aggressive|tight
+  +model: string?
+}
+
+class GameState {
+  +handId: string
+  +street: HandStreet
+  +boardCards: string[]
+  +currentTurnSeatId: number?
+  +potAmount: number
+  +actions: HandAction[]
+  +positions: Map<seatId, PositionLabel>
+}
+
+class HandAction {
+  +order: number
+  +seatId: number
+  +action: ActionType
+  +amount: number
+  +street: HandStreet
+}
+
+class HandReviewRecord {
+  +handId: string
+  +participantIds: string[]
+  +actions: HandAction[]
+  +analyses: HandActionAnalysis[]
+  +analyzeJob: HandReviewAnalyzeJob?
+}
+
+class HandActionAnalysis {
+  +id: string
+  +actionOrder: number
+  +provider: LlmProvider
+  +analysis: string
+  +evBb: number?
+  +heroEquity: number?
+  +gtoMix: GtoActionMix?
+}
+
+class GtoActionMix {
+  +check: number
+  +call: number
+  +fold: number
+  +raise: number
+  +allIn: number
+}
+
+enum UserRole {
+  GUEST
+  FREE
+  PRO
+}
+
+enum RoomType {
+  AI_BOT
+  CASH
+  TOURNAMENT
+}
+
+enum RoomStatus {
+  WAITING_SETUP
+  READY
+  IN_HAND
+  SHOWDOWN
+  HAND_ENDED
+  CLOSED
+}
+
+enum ActionType {
+  fold
+  check
+  call
+  bet
+  raise
+  all-in
+}
+
+enum LlmProvider {
+  local
+  openai
+  claude
+  gemini
+}
+
+AuthController --> AuthService
+RoomsController --> RoomsService
+GameController --> GameService
+HandReviewController --> HandReviewService
+AiController --> AiService
+
+AuthService --> UsersService
+RoomsService --> StoreService
+RoomsService --> UsersService
+GameService --> StoreService
+GameService --> AiService
+HandReviewService --> StoreService
+HandReviewService --> AiService
+HandReviewService --> UsersService
+UsersService --> StoreService
+
+StoreService *-- RoomRecord
+RoomRecord *-- "1..*" SeatState
+SeatState *-- "0..1" PlayerState
+PlayerState o-- BotConfig
+RoomRecord *-- "0..1" GameState
+GameState *-- "0..*" HandAction
+StoreService *-- HandReviewRecord
+HandReviewRecord *-- "1..*" HandAction
+HandReviewRecord *-- "0..*" HandActionAnalysis
+HandActionAnalysis *-- "0..1" GtoActionMix
+
+BotConfig --> LlmProvider
+BotConfig --> UserRole
+RoomRecord --> RoomType
+RoomRecord --> RoomStatus
+HandAction --> ActionType
+
+@enduml

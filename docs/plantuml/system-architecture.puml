@@ -1,0 +1,84 @@
+@startuml
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam linetype ortho
+
+title AIPOT System Architecture (Code-Aligned)
+
+actor "Player" as Player
+actor "PRO Player" as Pro
+
+node "Web Client" {
+  component "Frontend\n(Vite + React + React Router)" as FE
+  component "Session Layer\n(localStorage JWT + user profile)" as Session
+  FE --> Session
+}
+
+node "Backend API (NestJS)" {
+  component "AuthModule\n/auth/*" as AuthM
+  component "LobbyModule\n/lobby/*" as LobbyM
+  component "RoomsModule\n/rooms/*" as RoomsM
+  component "GameModule\n/game/*" as GameM
+  component "HandReviewModule\n/hand-review/*" as ReviewM
+  component "AiModule\n/ai/*" as AiM
+  component "ProfileModule\n/profile/*" as ProfileM
+  component "SocialModule\n/social/*" as SocialM
+
+  component "UsersService" as UsersSvc
+  component "StoreService\n- room/game state engine\n- social graph\n- hand review persistence\n- timeout/runout rules" as StoreSvc
+}
+
+database "MySQL\n(TypeORM)\nstate_snapshots" as MySQL
+
+cloud "LLM Providers" {
+  component "OpenAI" as OpenAI
+  component "Claude" as Claude
+  component "Gemini" as Gemini
+  component "Local LLM Gateway\n(OpenAI-compatible)" as LocalLLM
+}
+
+Player --> FE : sign-in / quick-play / table-play
+Pro --> FE : premium hand review / paid model use
+
+FE --> AuthM : auth APIs
+FE --> LobbyM : table list / quick-play / leaderboard
+FE --> RoomsM : create/join/seat/bot/blind management
+FE --> GameM : state sync / act / timer-sync / next-hand
+FE --> ReviewM : hand list/detail + analyze status polling
+FE --> ProfileM : profile/stats/avatar/store
+FE --> SocialM : friends / requests / room invites
+
+AuthM --> UsersSvc
+ProfileM --> UsersSvc
+
+UsersSvc --> StoreSvc
+LobbyM --> StoreSvc
+RoomsM --> StoreSvc
+GameM --> StoreSvc
+ReviewM --> StoreSvc
+SocialM --> StoreSvc
+
+GameM --> AiM : bot decision
+ReviewM --> AiM : hand analysis
+
+AiM --> OpenAI
+AiM --> Claude
+AiM --> Gemini
+AiM --> LocalLLM
+
+StoreSvc --> MySQL : hydrate/persist snapshot
+
+note right of GameM
+- getState/act/timerSync 시 BOT 턴 즉시 처리
+- 액션 타이머 만료 자동 처리(fold/check)
+- all-in runout/스트리트 전환/승자 계산 관리
+end note
+
+note right of ReviewM
+- 전체 액션 분석은 비동기 큐 방식
+- 상태: pending/running/completed/failed
+- 결과는 HandReviewRecord.analyses[]에 저장
+end note
+
+@enduml
