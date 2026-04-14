@@ -1,0 +1,95 @@
+@startuml
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+
+title AIPOT User Scenario (가입/플레이/AI복기)
+
+actor User
+participant "Frontend\n(React)" as FE
+participant "Auth API" as Auth
+participant "Lobby API" as Lobby
+participant "Rooms API" as Rooms
+participant "Game API" as Game
+participant "GameService" as GameSvc
+participant "StoreService" as Store
+participant "HandReview API" as Review
+participant "HandReviewService" as ReviewSvc
+participant "AiService" as AI
+participant "LLM Provider" as LLM
+
+== 1) 인증 & 매칭 ==
+User -> FE : 로그인/회원가입/게스트 선택
+FE -> Auth : POST /auth/sign-in (or sign-up, guest-session)
+Auth --> FE : accessToken + user profile
+
+User -> FE : Quick Play 클릭
+FE -> Lobby : POST /lobby/quick-play
+Lobby -> Store : 참가 가능한 공개 룸 탐색 + 착석 처리
+Store --> Lobby : roomId
+Lobby --> FE : matched=true, roomId
+FE -> Rooms : GET /rooms/{roomId}
+Rooms --> FE : room detail
+
+== 2) 플레이 루프 & BOT 행동 ==
+loop 상태 동기화
+  FE -> Game : GET /game/rooms/{roomId}/state
+  Game -> GameSvc : getState(user, roomId)
+  GameSvc -> Store : autoResolveTimeout(roomId)
+
+  alt 현재 턴이 BOT
+    GameSvc -> AI : generateBotAction(context, role)
+    AI -> LLM : provider call (local/openai/claude/gemini)
+    LLM --> AI : JSON action
+    AI --> GameSvc : normalized decision
+    GameSvc -> Store : applyPlayerAction(bot)
+  end
+
+  GameSvc --> Game : snapshot
+  Game --> FE : room/game snapshot
+end
+
+User -> FE : fold/check/call/bet/raise/all-in
+FE -> Game : POST /game/rooms/{roomId}/act
+Game -> Store : applyPlayerAction(human)
+Game -> GameSvc : processBotTurns(roomId)
+GameSvc -> Store : 필요 시 BOT 후속 액션 처리
+Game --> FE : updated state
+
+== 3) 핸드 리뷰 비동기 분석 (PRO) ==
+User -> FE : Hand Review 진입 + Analyze 클릭
+FE -> Review : POST /hand-review/hands/{handId}/analyze
+Review -> ReviewSvc : analyze(user, handId, dto)
+ReviewSvc -> Store : analyzeJob = pending
+Review --> FE : queued(requestId)
+
+par 백그라운드 분석
+  ReviewSvc -> Store : analyzeJob = running
+  ReviewSvc -> AI : analyzeAllHandActions(handContext, heroUserId)
+  AI -> LLM : structured action review request
+  LLM --> AI : summary + action reviews(JSON/텍스트)
+  AI --> ReviewSvc : normalized reviews(ev/equity/mix)
+  loop action별 저장
+    ReviewSvc -> Store : addHandActionAnalysis(...)
+  end
+  ReviewSvc -> Store : analyzeJob = completed
+else 클라이언트 폴링
+  loop every 3s
+    FE -> Review : GET /hand-review/hands/{handId}/analyze-status
+    Review -> Store : getAnalyzeJob
+    Review --> FE : pending/running/completed/failed
+  end
+end
+
+FE -> Review : GET /hand-review/hands/{handId}
+Review -> Store : hand detail + analyses 조회
+Review --> FE : replay + action insight + GTO mix 시각화 데이터
+
+note right of AI
+- 히어로 관점 강제
+- 언어별 출력 제약(en/ko/ja)
+- 누락 액션 보강(2차 요청 + 로컬 폴백)
+- provider 실패 시 결정적 fallback
+end note
+
+@enduml
